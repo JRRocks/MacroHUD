@@ -53,3 +53,21 @@ les couleurs claires ou sombres passent d'une variante à l'autre.
 node maquettes/outils/generer.mjs   # écrit index.html
 node maquettes/outils/rendre.mjs    # écrit les PNG et contrôle contraste et débordements
 ```
+
+## Rendu réel du HUD codé (variante 2, D-12)
+
+Le HUD retenu est codé dans `src/hud/`. Ses images ne sont pas des maquettes : c'est le vrai
+code du HUD, branché sur le contrat (`src/contract.rs`), rendu sans écran par les tests.
+
+- `rendu-egui/variante-2-egui.png` : les six vues de la maquette, même mise en page et mêmes fonds
+  que `variante-2.png`, pour les comparer d'un coup d'œil.
+- `rendu-egui/situations-egui.png` : chaque situation de `contract::samples()`, plus le délai de 3 s
+  après « Activer » et F8 refusé avec la souris sur le HUD.
+- `rendu-egui/vue-*.png` (100 % et 200 %) et `rendu-egui/situation-*.png` : chaque image seule.
+
+```bash
+MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::   # refait toutes ces images
+```
+
+Sans `MACROHUD_RENDUS`, `cargo test` écrit les vues seules dans `target/rendus-hud/`. Les fonds des
+planches (`fonds/`) viennent de la page des maquettes : `node maquettes/outils/rendre.mjs --fonds maquettes/fonds`.

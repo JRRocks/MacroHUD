@@ -2,7 +2,7 @@
 //! rules `.v2` and `.dark` of `maquettes/outils/generer.mjs`). Sizes are egui points, i.e. pixels at
 //! 100 % Windows scaling.
 
-use egui::{Color32, epaint::Shadow};
+use eframe::egui::{Color32, epaint::Shadow};
 
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
@@ -62,20 +62,16 @@ pub const KEY_OFF_INK: Color32 = rgb(0xa3abb6);
 pub const INFO: Color32 = rgb(0x6cb8ff);
 pub const INFO_BG: Color32 = rgb(0x10233a);
 pub const INFO_TEXT: Color32 = rgb(0xb3d7ff);
-pub const INFO_BUTTON: Color32 = rgb(0x173356);
 pub const WARN: Color32 = rgb(0xffb547);
 pub const WARN_BG: Color32 = rgb(0x2b2112);
 pub const WARN_TITLE: Color32 = rgb(0xfff1d6);
 pub const WARN_TEXT: Color32 = rgb(0xffe2b0);
-pub const WARN_BUTTON: Color32 = rgb(0x3a2c14);
-pub const WARN_BUTTON_HOVER: Color32 = rgb(0x4d3a1a);
 /// The « ! » inside the warning sign.
 pub const SIGN_INK: Color32 = rgb(0x1a1206);
 pub const ERROR: Color32 = rgb(0xff6b6b);
 pub const ERROR_BG: Color32 = rgb(0x3a1616);
 pub const ERROR_TITLE: Color32 = rgb(0xffe3e3);
 pub const ERROR_TEXT: Color32 = rgb(0xffc9c9);
-pub const ERROR_BUTTON: Color32 = rgb(0x4d1d1d);
 /// Keyboard focus ring.
 pub const FOCUS: Color32 = rgb(0x6cb8ff);
 
@@ -97,13 +93,9 @@ pub const LINE_MESSAGE: f32 = 16.0;
 
 /// Drop shadow of the mock-up (`0 6px 16px rgba(0,0,0,.5)`). Painted in the renders; in the
 /// real window it would need a transparent margin that swallows clicks around the HUD.
-pub const SHADOW: Shadow = Shadow {
-    offset: [0, 6],
-    blur: 16,
-    spread: 0,
-    color: Color32::from_black_alpha(128),
-};
+pub const SHADOW: Shadow = Shadow { offset: [0, 6], blur: 16, spread: 0, color: Color32::from_black_alpha(128) };
 /// Room the shadow needs around the HUD: left/right, top, bottom.
+#[cfg(test)]
 pub const SHADOW_MARGIN: [f32; 3] = [16.0, 10.0, 22.0];
 
 // Font weights (Inter variable font, `wght` axis).

@@ -21,6 +21,72 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Le HUD choisi (variante 2) branché sur le moteur
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw` ; fusions de `claude/gifted-hypatia-g84kg1`
+  (programmation, `b18e4fb`) et de `main` (D-13, D-14), puis commit « HUD variante 2 branché sur le
+  contrat », puis le marqueur vide `[ETAPE-FINIE visuel-hud]`.
+- **Objectif** : étape 2, second temps : brancher le HUD de la variante 2 sur les types du contrat,
+  régler la fenêtre, garder le test de rendu PNG dans le crate principal.
+- **Réalisé** :
+  - `src/hud/` remplace le HUD provisoire en gardant son interface (`setup`, `draw`, `window_size`,
+    `TRANSPARENT`, `MESSAGE_DURATION`, `window_icon`) : il dessine depuis `HudState` et renvoie les
+    `HudAction` du contrat (Start, Stop, SetOptions, StartCapture, CancelCapture, SetCollapsed,
+    StartDrag, Quit). Seule mémoire entre deux images : quelle macro a ses réglages dépliés.
+  - Le texte est mesuré par des polices à part : `window_size` (sans contexte egui) et `draw`
+    calculent exactement la même mise en page.
+  - Messages du contrat (un texte et un niveau) : encadré avec un titre selon le niveau
+    (« Information », « Attention », « Erreur ») et le texte dessous ; dans les réglages ouverts,
+    sinon en bas du HUD, et sous la pastille quand le HUD est replié.
+  - Les deux cas signalés par la session maître : « Activer » → la ligne passe au vert et l'encadré
+    bleu du moteur annonce l'appui dans 3 s ; F8 avec la souris sur le HUD → encadré « Attention »,
+    visible même replié.
+  - Fenêtre : `TRANSPARENT = true` (coins arrondis, pastille), taille du HUD avec son anneau noir
+    d'1 px, sans ombre ; pas d'icône propre (elle demanderait ses maquettes).
+  - Tests de rendu dans le crate principal (`src/hud/render.rs`) ; le crate d'essai
+    `maquettes/egui/` est supprimé, ses fonds passent dans `maquettes/fonds/` ; rendus du vrai HUD
+    dans `maquettes/rendu-egui/` (planche des six vues de la maquette, planche de toutes les
+    situations de `samples()` plus les deux cas ci-dessus).
+  - Hors de `src/hud/`, deux retouches minimes, signalées ici : `src/app.rs` reçoit `clear_color`
+    transparent (eframe efface par défaut en gris sombre semi-opaque : le HUD aurait eu des coins
+    gris malgré `TRANSPARENT`) ; `Cargo.toml` reçoit `png` en dépendance de test.
+- **Décisions** (choix de présentation, à confirmer par la session maître) : titre d'un message =
+  son niveau en mots ; « Active · bouton gauche » au lieu de « Active · gauche enfoncé » de la
+  maquette (vrai aussi pendant les 3 s avant l'appui) ; « bouton milieu » (« du milieu » serait coupé) ;
+  raccourci très long coupé par « … » sur la ligne ; version trop longue (« 0.1.0-dev » d'une
+  compilation locale) coupée avant « Replier » ; plus de bouton « Choisir une autre touche » (le
+  contrat ne dit pas quelle macro un message concerne) ; macro « À venir » : dessin selon sa sorte,
+  déduite de ses options.
+- **Vérifications** :
+  - `cargo fmt --check` ; `cargo clippy --all-targets --locked -- -D warnings` sous Linux et pour la
+    cible `x86_64-pc-windows-msvc` : sans remarque. `cargo test --locked` : 89 tests verts, dont
+    11 du HUD (tailles identiques à la maquette ; vrais clics envoyés à egui → actions du contrat ;
+    glisser la barre ou la pastille → StartDrag ; macros à venir inertes ; version longue et lignes
+    d'état jamais coupées ; message sous la pastille) et celui de la session « programmation » qui
+    dessine chaque situation de `samples()`.
+  - Le vrai programme (`cargo run`, fenêtre eframe, OpenGL logiciel) sous un écran virtuel Xvfb,
+    clics simulés par xdotool : HUD en (0, 0), 290 × 86 ; flèche → réglages (290 × 190) ;
+    « Activer » → ligne verte et encadré des 3 s, appui (simulé) 3 s plus tard d'après le journal ;
+    « Milieu » enregistré dans les réglages ; « Changer » → zone de capture (290 × 242),
+    « Annuler » → « Raccourci inchangé : F8. » ; « Replier » avec ce message → pastille et encadré
+    dessous (290 × 105) ; « Déplier » ; « Quitter » pendant un maintien → bouton relâché puis fermeture
+    normale. Cet essai a montré « 0.1.0-dev » qui touchait « Replier » : corrigé, test ajouté.
+- **Non vérifié sur le PC** : R17 à R20 du plan : transparence réelle sous Windows (sans compositeur,
+  Xvfb montre les coins en noir), mise à l'échelle 125/150 %, HUD au-dessus d'un jeu, F8 réel avec
+  la souris sur le HUD.
+- **Problèmes et dette** :
+  1. Contrat : `Message` n'a qu'un texte et un niveau, donc ni titre précis (« Raccourci refusé »)
+     ni bouton « Choisir une autre touche » comme sur la maquette ; à ajouter au contrat si voulu.
+  2. Contrat : `Active` couvre « appui dans 3 s » et « bouton tenu » ; un état distinct permettrait
+     d'écrire « enfoncé dans 3 s » puis « enfoncé » sur la ligne.
+  3. Un clic sur le HUD lui donne le focus (le jeu le perd) ; le style Windows « no activate »
+     l'éviterait (côté « programmation »), à juger au test sur le PC.
+- **Prochaine étape** : test sur le PC (P1.6, R1 à R20) avec l'artefact de la CI, puis fusion par
+  la session maître.
+
+---
+
 ## 2026-11-20 · Le moteur « Maintenir le clic », les raccourcis et la livraison automatique
 
 - **Session** : programmation

@@ -231,6 +231,12 @@ impl eframe::App for HudApp {
         }
     }
 
+    /// Clears the window to transparent, so that the HUD draws its own shape when `hud::TRANSPARENT`
+    /// is on (eframe's default is a translucent dark grey).
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.shutdown();
     }

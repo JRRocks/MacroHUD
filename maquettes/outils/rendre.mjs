@@ -110,7 +110,7 @@ const overflows = await page.evaluate(() => {
 for (const o of overflows) console.log(o);
 failures += overflows.length;
 
-// --fonds <dossier>: the three background scenes alone, 960 × 880 (used by maquettes/egui).
+// --fonds <dossier>: the three background scenes alone, 960 × 880 (maquettes/fonds, used by the HUD's render tests).
 const fondsIdx = process.argv.indexOf('--fonds');
 if (fondsIdx > 0) {
   const dir = resolve(process.argv[fondsIdx + 1]);

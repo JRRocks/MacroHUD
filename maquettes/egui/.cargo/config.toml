@@ -1,3 +1,0 @@
-# `cargo test` here writes the renders into maquettes/egui/rendus.
-[env]
-MACROHUD_RENDUS = { value = "rendus", relative = true }

@@ -1028,6 +1028,7 @@ name = "macrohud"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "png",
  "raw-window-handle",
  "serde_json",
  "windows-sys 0.61.2",
