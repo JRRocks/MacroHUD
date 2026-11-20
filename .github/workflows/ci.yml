@@ -1,0 +1,95 @@
+# Every push, on any branch: the tests on Linux (format, clippy, cargo test), then the Windows x64
+# build (clippy and tests there too, release build, check of `macrohud --version`), with the
+# executable MacroHUD.<version>.exe kept as an artifact of the run. On main only, and only when every
+# step passed: the GitHub Release v<version> with that executable. Nothing is published if a test fails.
+#
+# The version is 0.1.<run number of this workflow>: it goes up by itself with every run and is never
+# used twice (do not rename this file: the run numbers would start again from 1).
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# On a work branch, a new push replaces the run still going; on main, every run goes to the end.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  tests:
+    name: Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust
+        run: rustup toolchain install && cargo --version
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+
+  windows:
+    name: Windows x64, exécutable et publication
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      MACROHUD_VERSION: 0.1.${{ github.run_number }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust
+        run: rustup toolchain install && cargo --version
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (code Windows)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests (Windows)
+        run: cargo test --locked
+      - name: Compilation (MSVC, release)
+        run: cargo build --release --locked
+      - name: Essai de l'exécutable
+        run: |
+          ./target/release/macrohud.exe --version > version.txt
+          cat version.txt
+          test "$(tr -d '\r' < version.txt)" = "MacroHUD $MACROHUD_VERSION"
+          cp target/release/macrohud.exe "MacroHUD.$MACROHUD_VERSION.exe"
+          ls -l "MacroHUD.$MACROHUD_VERSION.exe"
+      - name: Exécutable (artefact)
+        uses: actions/upload-artifact@v7
+        with:
+          name: MacroHUD.${{ env.MACROHUD_VERSION }}
+          path: MacroHUD.${{ env.MACROHUD_VERSION }}.exe
+          if-no-files-found: error
+      - name: Publication
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "MacroHUD $MACROHUD_VERSION pour Windows 64 bits (commit ${GITHUB_SHA::7})."
+            echo
+            echo "Téléchargez \`MacroHUD.$MACROHUD_VERSION.exe\` et lancez-le : rien à installer, le HUD s'ouvre"
+            echo "au-dessus des autres fenêtres. Le fichier n'est pas signé : Windows SmartScreen peut avertir"
+            echo "au premier lancement (« Informations complémentaires », puis « Exécuter quand même »)."
+            echo
+            echo "Mise à jour : remplacez l'ancien fichier par celui-ci. Les réglages restent dans \`%APPDATA%\\MacroHUD\`."
+          } > notes.md
+          gh release create "v$MACROHUD_VERSION" "MacroHUD.$MACROHUD_VERSION.exe" \
+            --target "$GITHUB_SHA" --title "MacroHUD $MACROHUD_VERSION" --notes-file notes.md
