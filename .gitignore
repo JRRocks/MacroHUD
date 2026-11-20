@@ -1,0 +1,6 @@
+/target/
+/essais-prives/
+.env
+*.env
+*.pfx
+*.p12
