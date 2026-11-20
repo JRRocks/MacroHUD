@@ -80,8 +80,14 @@ Gabarit :
     maintiens (de la main et d'un autre programme) ; clic d'un autre programme ailleurs ignoré ;
     raccourci enregistré pendant une capture ; première réponse de capture gagnante ; décodage des
     messages clavier du fil du HUD ; retrait d'un message côté HUD.
-  - CI : voir l'exécution du commit `[ETAPE-FINIE programmation-correctif-1]` (tests Windows, dont
-    l'installation réelle du crochet clavier du fil du HUD).
+  - CI, exécution n° 8 (commit `0d2990e`, le code de ce correctif) : tout vert. Windows : clippy ;
+    106 tests, dont l'installation et le retrait réels du crochet clavier du fil du HUD ; compilation
+    release ; `MacroHUD.0.1.8.exe --version` répond « MacroHUD 0.1.8 ». Le commit vide qui suit
+    refait tout et donne l'exécutable à essayer.
+  - Le vrai programme sous Linux (écran virtuel, clics simulés, HUD variante 2) : ▶ → ligne
+    « Arrêtée · bouton gauche » et encadré « Activation dans 2 s : place la souris… » pendant le
+    décompte, puis ligne verte « Active » et encadré disparu à l'appui ; « Quitter » → bouton
+    relâché, fermeture normale.
 - **Non vérifié sur le PC** : R21 (capture avec le HUD au premier plan), R22 (clic sur le HUD pendant
   un maintien droit ou milieu), R23 et R8, R18 mis à jour (décompte), R10 mis à jour (« Quitter »
   pendant un maintien : premier clic = arrêt).
