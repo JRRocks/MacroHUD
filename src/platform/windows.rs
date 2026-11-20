@@ -493,7 +493,8 @@ impl EngineWaker {
 }
 
 enum HookRequest {
-    Watch(ButtonSet, SyncSender<Result<(), String>>),
+    /// Buttons held, buttons clicked (see `MouseGuard::watch`).
+    Watch(ButtonSet, ButtonSet, SyncSender<Result<(), String>>),
     StartCapture(Modifiers, SyncSender<Result<(), String>>),
     StopCapture,
     Quit,
@@ -593,7 +594,7 @@ unsafe extern "system" fn mouse_procedure(code: i32, wparam: WPARAM, lparam: LPA
             let source = if injected { Source::OtherProgram } else { Source::Hand };
             let swallow = with_hooks(|state| {
                 let on_hud = edge == Edge::Down
-                    && !state.guard.held().is_empty()
+                    && !state.guard.used().is_empty()
                     && state.hud.is_some_and(|hud| point_in_window(hud, info.pt));
                 let verdict = state.guard.on_event(button, edge, source, on_hud, Instant::now());
                 if !verdict.stop.is_empty() {
@@ -714,9 +715,9 @@ fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: En
         match msg.message {
             WM_WAKE => loop {
                 match requests.try_recv() {
-                    Ok(HookRequest::Watch(held, answer)) => {
+                    Ok(HookRequest::Watch(held, clicked, answer)) => {
                         let result = with_hooks(|s| {
-                            s.guard.watch(held);
+                            s.guard.watch(held, clicked);
                             s.sync_mouse()
                         });
                         let _ = answer.send(result.unwrap_or_else(|| Err("état des crochets occupé".into())));
@@ -787,10 +788,10 @@ struct WindowsBackend {
 }
 
 impl Backend for WindowsBackend {
-    fn watch(&mut self, held: ButtonSet) -> Result<(), String> {
+    fn watch(&mut self, held: ButtonSet, clicked: ButtonSet) -> Result<(), String> {
         match &self.hooks {
-            Some(hooks) => hooks.ask(|answer| HookRequest::Watch(held, answer)),
-            None if held.is_empty() => Ok(()),
+            Some(hooks) => hooks.ask(|answer| HookRequest::Watch(held, clicked, answer)),
+            None if held.union(clicked).is_empty() => Ok(()),
             None => Err("le fil des crochets n'a pas démarré".into()),
         }
     }
@@ -820,7 +821,7 @@ impl Backend for WindowsBackend {
     }
 
     fn pointer_on_hud(&self) -> bool {
-        self.hud.is_some_and(pointer_in_window)
+        self.hud.is_some_and(|hud| pointer_in_window(hud) || holds_the_mouse(hud))
     }
 
     fn register_hotkey(&mut self, hotkey: Hotkey) -> Result<HotkeyId, RegisterError> {
@@ -870,6 +871,14 @@ impl Backend for WindowsBackend {
     fn layout_char(&self, key: Vk) -> Option<char> {
         layout_char(key)
     }
+}
+
+/// Whether the window's thread holds the mouse: a press on it is not released yet (a drag of the
+/// HUD's speed slider, or of the window itself), and Windows sends it every mouse message meanwhile,
+/// wherever the pointer went (winit captures the mouse at each press).
+fn holds_the_mouse(hwnd: isize) -> bool {
+    let thread = thread_of(hwnd);
+    thread != 0 && capture_of(thread) != 0
 }
 
 /// Whether the mouse pointer is over the window.
@@ -1439,8 +1448,10 @@ mod tests {
         let (sender, _events) = mpsc::channel();
         let waker = EngineWaker { thread_id: unsafe { GetCurrentThreadId() }, sender };
         let hooks = HookThread::spawn(waker, None).expect("hook thread");
-        hooks.ask(|a| HookRequest::Watch(ButtonSet::only(MouseButton::Middle), a)).expect("mouse hook");
-        hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, a)).expect("no mouse hook");
+        let middle = ButtonSet::only(MouseButton::Middle);
+        hooks.ask(|a| HookRequest::Watch(middle, ButtonSet::EMPTY, a)).expect("mouse hook, held button");
+        hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, middle, a)).expect("mouse hook, clicked button");
+        hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, ButtonSet::EMPTY, a)).expect("no mouse hook");
         hooks.ask(|a| HookRequest::StartCapture(Modifiers::NONE, a)).expect("keyboard hook");
         hooks.tell(HookRequest::StopCapture);
         drop(hooks);

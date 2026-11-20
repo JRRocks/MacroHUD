@@ -96,7 +96,7 @@ struct StandIn {
 }
 
 impl Backend for StandIn {
-    fn watch(&mut self, _guarded: ButtonSet) -> Result<(), String> {
+    fn watch(&mut self, _held: ButtonSet, _clicked: ButtonSet) -> Result<(), String> {
         Ok(())
     }
     fn is_down(&self, button: MouseButton) -> bool {

@@ -152,8 +152,9 @@ pub struct MacroView {
     pub options: MacroOptions,
     /// False for a macro « à venir »: shown greyed out, nothing can be asked of it.
     pub available: bool,
-    /// An active « Multi-clic » whose clicks wait because the mouse is on the HUD (D-22); they go on
-    /// once it leaves. Always false otherwise.
+    /// An active « Multi-clic » whose clicks wait because the mouse is on the HUD, or a press on the
+    /// HUD is not released yet (D-22); they go on once it leaves. Meanwhile a click on the HUD acts
+    /// there at once (D-27). Always false otherwise.
     pub suspended: bool,
 }
 

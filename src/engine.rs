@@ -51,8 +51,10 @@ pub enum RegisterError {
 
 /// What the engine needs from the system.
 pub trait Backend {
-    /// From now on the physical-click guard watches these buttons (the ones macros hold or click).
-    fn watch(&mut self, guarded: ButtonSet) -> Result<(), String>;
+    /// From now on the physical-click guard watches these buttons: those « Maintenir le clic » holds
+    /// (`held`: a click on the HUD stops it, D-17) and those « Multi-clic » clicks (`clicked`: a
+    /// click on the HUD acts there, D-27).
+    fn watch(&mut self, held: ButtonSet, clicked: ButtonSet) -> Result<(), String>;
     /// Whether the button is already down (held by the user's hand, for instance).
     fn is_down(&self, button: MouseButton) -> bool;
     /// Presses the button (injected input), remembered for the emergency release.
@@ -68,7 +70,8 @@ pub trait Backend {
     /// Its release: as [`Backend::release`], without a line in the run log. `Ok(true)`: Windows would
     /// not have brought it to the window of the press, which got it sent as well (P1.8).
     fn click_up(&mut self, button: MouseButton) -> Result<bool, String>;
-    /// Whether the mouse pointer is over the HUD window.
+    /// Whether the mouse acts on the HUD: the pointer is over its window, or a press on it is not
+    /// released yet (a drag that went past its edge still goes to the HUD).
     fn pointer_on_hud(&self) -> bool;
     /// Registers a global hotkey.
     fn register_hotkey(&mut self, hotkey: Hotkey) -> Result<HotkeyId, RegisterError>;
@@ -477,7 +480,7 @@ impl<B: Backend> Engine<B> {
         for i in 0..self.slots.len() {
             self.stop_macro(i, Cause::Shutdown, now);
         }
-        let _ = self.backend.watch(ButtonSet::EMPTY);
+        let _ = self.backend.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
         for i in 0..self.slots.len() {
             if let Some(id) = self.slots[i].registered.take() {
                 self.backend.unregister_hotkey(id);
@@ -488,11 +491,23 @@ impl<B: Backend> Engine<B> {
     /// The buttons macros hold or click right now: the guard watches them, and a crash test fires
     /// when one of them stops (`--essai-plantage`).
     pub fn guarded_buttons(&self) -> ButtonSet {
-        self.slots.iter().fold(ButtonSet::EMPTY, |set, s| match s.run {
-            Run::Holding { button } => set.with(button),
-            Run::Clicking(c) => set.with(c.button),
-            Run::Stopped | Run::Arming { .. } => set,
+        let (held, clicked) = self.guard_sets();
+        held.union(clicked)
+    }
+
+    /// The buttons « Maintenir le clic » holds, and those « Multi-clic » clicks.
+    fn guard_sets(&self) -> (ButtonSet, ButtonSet) {
+        self.slots.iter().fold((ButtonSet::EMPTY, ButtonSet::EMPTY), |(held, clicked), s| match s.run {
+            Run::Holding { button } => (held.with(button), clicked),
+            Run::Clicking(c) => (held, clicked.with(c.button)),
+            Run::Stopped | Run::Arming { .. } => (held, clicked),
         })
+    }
+
+    /// Tells the guard what the macros use now (after a stop, or a start that failed).
+    fn rewatch(&mut self) {
+        let (held, clicked) = self.guard_sets();
+        let _ = self.backend.watch(held, clicked);
     }
 
     /// What the HUD needs to know.
@@ -633,13 +648,14 @@ impl<B: Backend> Engine<B> {
     fn press_now(&mut self, i: usize, button: MouseButton) {
         self.slots[i].run = Run::Stopped;
         // The guard first: no button is ever down without a way for the user to take it back.
-        if let Err(e) = self.backend.watch(self.guarded_buttons().with(button)) {
+        let (held, clicked) = self.guard_sets();
+        if let Err(e) = self.backend.watch(held.with(button), clicked) {
             self.say(
                 i,
                 MessageLevel::Error,
                 format!("Impossible de surveiller la souris ({e}) : rien n'a été enfoncé."),
             );
-            let _ = self.backend.watch(self.guarded_buttons());
+            self.rewatch();
             return;
         }
         let pressed = if self.backend.is_down(button) {
@@ -654,7 +670,7 @@ impl<B: Backend> Engine<B> {
                 crate::log::write(format!("« {} » : {} maintenu.", self.slots[i].def.name, button.phrase()));
             }
             Err(e) => {
-                let _ = self.backend.watch(self.guarded_buttons());
+                self.rewatch();
                 self.say(i, MessageLevel::Error, format!("Windows a refusé d'enfoncer {} ({e}).", button.phrase()));
             }
         }
@@ -663,13 +679,14 @@ impl<B: Backend> Engine<B> {
     fn start_clicking(&mut self, i: usize, button: MouseButton, rate: ClickRate, trigger: Trigger, now: Instant) {
         self.slots[i].run = Run::Stopped;
         // The guard first: no click without a way for the user to take the mouse back.
-        if let Err(e) = self.backend.watch(self.guarded_buttons().with(button)) {
+        let (held, clicked) = self.guard_sets();
+        if let Err(e) = self.backend.watch(held, clicked.with(button)) {
             self.say(
                 i,
                 MessageLevel::Error,
                 format!("Impossible de surveiller la souris ({e}) : aucun clic n'est parti."),
             );
-            let _ = self.backend.watch(self.guarded_buttons());
+            self.rewatch();
             return;
         }
         let way = match trigger {
@@ -774,7 +791,7 @@ impl<B: Backend> Engine<B> {
                 // Release first: nothing may delay it.
                 let released = self.backend.release(button);
                 self.slots[i].run = Run::Stopped;
-                let _ = self.backend.watch(self.guarded_buttons());
+                self.rewatch();
                 match released {
                     Ok(()) => {
                         crate::log::write(format!("« {} » : {} relâché.", self.slots[i].def.name, button.phrase()))
@@ -793,7 +810,7 @@ impl<B: Backend> Engine<B> {
                 // A press under way is released first; its release reaches the window of the press.
                 let released = c.release_at.map(|_| self.backend.release(c.button));
                 self.slots[i].run = Run::Stopped;
-                let _ = self.backend.watch(self.guarded_buttons());
+                self.rewatch();
                 let why = match cause {
                     Cause::Hotkey => format!("par {}", self.label(self.slots[i].hotkey)),
                     Cause::Hud => "par le HUD".to_string(),
@@ -992,14 +1009,17 @@ mod tests {
         /// What `click_up` answers: the release was also sent to the window of the press.
         delivered: bool,
         altgr: Option<(Hotkey, char)>,
+        /// What the guard was last told: buttons held, buttons clicked.
+        watching: (ButtonSet, ButtonSet),
     }
 
     impl Backend for Fake {
-        fn watch(&mut self, held: ButtonSet) -> Result<(), String> {
-            if self.fail_watch && !held.is_empty() {
+        fn watch(&mut self, held: ButtonSet, clicked: ButtonSet) -> Result<(), String> {
+            if self.fail_watch && !held.union(clicked).is_empty() {
                 return Err("crochet refusé".into());
             }
-            self.calls.push(Call::Watch(held));
+            self.calls.push(Call::Watch(held.union(clicked)));
+            self.watching = (held, clicked);
             Ok(())
         }
         fn is_down(&self, button: MouseButton) -> bool {
@@ -1851,20 +1871,34 @@ mod tests {
         assert_eq!(message(&e).about, Some(MULTI));
     }
 
+    /// D-27: during the clicks, the guard is told the button is clicked, not held (a click on the HUD
+    /// reaches the HUD), and what the HUD asks acts at once.
     #[test]
-    fn a_click_on_the_hud_stops_it_first() {
+    fn during_the_clicks_the_hud_acts_at_once() {
         let mut e = engine_both();
         let now = Instant::now();
+        press_hotkey(&mut e, now);
+        assert_eq!(e.backend().watching, (ButtonSet::only(Left), ButtonSet::EMPTY), "a hold is held");
         press_f9(&mut e, now);
+        assert_eq!(e.backend().watching, (ButtonSet::EMPTY, ButtonSet::only(Left)), "clicks are clicked");
         e.tick(now + 40 * MS);
         calls(&mut e);
-        e.event(Event::Click { buttons: ButtonSet::only(Left), on_hud: true }, now + 50 * MS);
+        // The speed slider: the clicks go on, at the new speed.
+        e.command(Command::SetOptions(MULTI, multi(Left, 5)), now + 50 * MS);
+        assert!(calls(&mut e).is_empty());
+        assert_eq!(multi_view(&e).status, MacroStatus::Active);
+        assert_eq!(e.next_deadline(), Some(now + 200 * MS));
+        // « Arrêter », at the first click.
+        e.command(Command::Stop(MULTI), now + 60 * MS);
         assert_eq!(calls(&mut e), vec![Call::Watch(ButtonSet::EMPTY)]);
         assert_eq!(multi_view(&e).status, MacroStatus::Stopped);
-        assert_eq!(
-            message(&e).text,
-            "« Multi-clic » arrêtée par ton clic sur le HUD : clique à nouveau pour agir sur le HUD."
-        );
+        // « Activer » of the hold, during the clicks: the clicks stop, the countdown starts.
+        press_f9(&mut e, now + Duration::from_secs(1));
+        calls(&mut e);
+        e.command(Command::Start(ID), now + Duration::from_secs(1) + 10 * MS);
+        assert_eq!(calls(&mut e), vec![Call::Release(Left), Call::Watch(ButtonSet::EMPTY)]);
+        assert_eq!(multi_view(&e).status, MacroStatus::Stopped);
+        assert!(message(&e).text.starts_with("Activation dans 3 s"), "{}", message(&e).text);
     }
 
     #[test]

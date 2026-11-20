@@ -21,6 +21,51 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · D-27 : pendant « Multi-clic », un clic sur le HUD agit tout de suite
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1` : fusion de `integration/passage-3`
+  (`6f090b6`, documentation seulement ; conflits de `docs/` résolus en gardant les deux côtés), puis
+  le code, puis le commit de fin `[ETAPE-FINIE programmation-multiclic-2]`. L'exécutable à essayer
+  est l'artefact de la CI de ce dernier commit.
+- **Objectif** : appliquer D-27, la réponse de l'utilisateur à la question « à trancher » de P2.1.
+- **Réalisé** :
+  - La surveillance de la souris distingue désormais les boutons **maintenus** (« Maintenir le
+    clic ») et **cliqués** (« Multi-clic ») ; le moteur lui dit lesquels. Maintenu : rien ne change
+    (D-17 : un clic sur le HUD est consommé et arrête le maintien). Cliqué : un clic sur le HUD passe
+    et agit sur le HUD dès le premier clic (curseur de rapidité, « Arrêter », « Quitter »), même fait
+    avec le bouton cliqué, et la macro continue sauf si ce clic l'arrête ; ailleurs, un vrai clic du
+    bouton cliqué arrête la macro et n'arrive pas à l'application (D-19) ; les autres boutons
+    passent.
+  - Ce que le HUD demande pendant les clics agit tout de suite : une nouvelle rapidité compte dès
+    le clic suivant sans arrêter la macro ; « Arrêter » arrête ; « Activer » de l'autre macro arrête
+    les clics puis lance son décompte (D-20) ; un nouveau bouton arrête toujours la macro (D-25).
+  - **D-28** : un appui commencé sur le HUD (glisser du curseur, déplacement du HUD) garde les clics
+    en pause jusqu'au relâchement, même si la souris sort du HUD : pendant un appui, le HUD tient la
+    souris (winit la capture à chaque appui, vérifié dans son code), et Windows lui enverrait les
+    clics automatiques. Sous Windows, « souris sur le HUD » veut donc dire : pointeur sur sa fenêtre,
+    ou fil du HUD qui tient la souris.
+  - Pendant le multi-clic, le relâchement d'un bouton que l'utilisateur tenait déjà n'est jamais
+    retenu (un clic sur le HUD a besoin de son relâchement) ; le maintien garde sa règle (il reprend
+    le bouton tenu).
+  - Contrat : forme inchangée ; seul le commentaire de `MacroView::suspended` est précisé (pause aussi
+    pendant un appui sur le HUD ; un clic sur le HUD agit pendant la pause). `src/hud/` inchangé.
+  - Plan : R28, R29, R31 et R33 réécrits (rapidité changée sans arrêt, clic sur le HUD qui agit,
+    glisser hors du HUD, « Arrêter » et « Quitter » dès le premier clic).
+- **Décisions** : D-28 (développeur).
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 130 tests OK sous Linux, dont
+  les nouveaux : pendant les clics, un clic sur le HUD passe (de la main ou d'un autre programme, du
+  bouton cliqué ou d'un autre) ; un vrai clic du bouton cliqué hors du HUD arrête et est consommé ;
+  le relâchement de l'utilisateur passe toujours ; le moteur dit à la surveillance « maintenu » ou
+  « cliqué », et ce que le HUD demande pendant les clics agit tout de suite.
+- **Non vérifié sur le PC** : R28, R29, R31, R33 ; le glisser hors du HUD (avec le curseur de P2.3,
+  ou en déplaçant le HUD par sa barre).
+- **Prochaine étape** : réunion avec la piste A de la session « visuel » sur `integration/passage-3` ;
+  passage 3 sur le PC.
+
+---
+
 ## 2026-11-20 · Aperçu de « Multi-clic » : piste A choisie
 
 - **Session** : maître

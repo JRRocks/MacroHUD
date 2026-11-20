@@ -1,5 +1,6 @@
-//! The physical-click guard: while a macro holds a mouse button, a real click on that button stops
-//! the macro (« un clic physique reprend la main »), and so does a click on the HUD.
+//! The physical-click guard: while a macro uses a mouse button (« Maintenir le clic » holds it,
+//! « Multi-clic » clicks it again and again), a real click on that button stops the macro (« un clic
+//! physique reprend la main »).
 //!
 //! It is fed with the button events seen by the low-level mouse hook (the events MacroHUD injects
 //! itself never reach it) and decides which ones to swallow:
@@ -7,11 +8,14 @@
 //! - the click that stops the macro is consumed, press and release, so the application sees one
 //!   press and one release, both from the macro, and nothing else;
 //! - while a button is held, a click on the HUD (any button, by hand or by another program) is
-//!   consumed and stops every hold: Windows sends all mouse input to the window that received the
-//!   held press (it "captures" the mouse), so that click would never reach the HUD, and would land in
-//!   the game instead;
-//! - when the macro starts while the user already holds the button, the user's release is consumed
-//!   too, so the macro takes the button over instead of losing it at once;
+//!   consumed and stops every hold (D-17): Windows sends all mouse input to the window that received
+//!   the held press (it "captures" the mouse), so that click would never reach the HUD, and would
+//!   land in the game instead;
+//! - while « Multi-clic » runs, a click on the HUD reaches the HUD and acts there at once (D-27): the
+//!   automatic clicks wait while the mouse is on the HUD, so nothing holds the mouse then; a real
+//!   click of the clicked button anywhere else stops the macro (D-19);
+//! - when « Maintenir le clic » starts while the user already holds the button, the user's release is
+//!   consumed too, so the macro takes the button over instead of losing it at once;
 //! - a release is never swallowed when its press reached the system: no button can get stuck.
 
 use std::time::{Duration, Instant};
@@ -39,6 +43,11 @@ impl ButtonSet {
 
     pub fn with(self, button: MouseButton) -> Self {
         ButtonSet(self.0 | Self::bit(button))
+    }
+
+    /// The buttons of both sets.
+    pub fn union(self, other: ButtonSet) -> Self {
+        ButtonSet(self.0 | other.0)
     }
 
     #[cfg(test)]
@@ -211,8 +220,10 @@ pub const PENDING_RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The guard itself.
 #[derive(Clone, Debug, Default)]
 pub struct MouseGuard {
-    /// Buttons held by macros.
+    /// Buttons held by « Maintenir le clic ».
     held: ButtonSet,
+    /// Buttons clicked again and again by « Multi-clic ».
+    clicked: ButtonSet,
     /// Per button (left, right, middle): a swallowed press whose release is still to swallow, since when.
     pending_release: [Option<Instant>; 3],
 }
@@ -226,19 +237,20 @@ fn index(button: MouseButton) -> usize {
 }
 
 impl MouseGuard {
-    /// The buttons macros hold from now on.
-    pub fn watch(&mut self, held: ButtonSet) {
+    /// The buttons macros hold (`held`) and click (`clicked`) from now on.
+    pub fn watch(&mut self, held: ButtonSet, clicked: ButtonSet) {
         self.held = held;
+        self.clicked = clicked;
     }
 
-    /// The buttons macros hold.
-    pub fn held(&self) -> ButtonSet {
-        self.held
+    /// The buttons macros use, held or clicked.
+    pub fn used(&self) -> ButtonSet {
+        self.held.union(self.clicked)
     }
 
-    /// Whether the hook is needed: a button is held, or a swallowed click is not released yet.
+    /// Whether the hook is needed: a macro uses a button, or a swallowed click is not released yet.
     pub fn needs_hook(&self) -> bool {
-        !self.held.is_empty() || self.pending_release.iter().any(Option::is_some)
+        !self.used().is_empty() || self.pending_release.iter().any(Option::is_some)
     }
 
     /// Handles a press or a release. `on_hud`: the pointer is over the HUD's window.
@@ -251,12 +263,13 @@ impl MouseGuard {
                 self.pending_release[i] = Some(now);
                 Verdict { swallow: true, stop: self.held, on_hud: true }
             }
-            Edge::Down if hand && self.held.contains(button) => {
-                // The user clicks the held button: the macro stops, and this click is consumed.
+            Edge::Down if hand && !on_hud && self.used().contains(button) => {
+                // The user clicks the button a macro uses: the macro stops, and this click is consumed.
                 self.pending_release[i] = Some(now);
                 Verdict { swallow: true, stop: ButtonSet::only(button), on_hud: false }
             }
             Edge::Down => {
+                // (During « Multi-clic », a click on the HUD comes here: it acts on the HUD, D-27.)
                 if hand {
                     // This press reaches the system, so its release must reach it too.
                     self.pending_release[i] = None;
@@ -264,7 +277,9 @@ impl MouseGuard {
                 Verdict::PASS
             }
             Edge::Up if self.pending_release[i].take().is_some() => Verdict::SWALLOW,
-            // The user held the button before the macro started: the macro keeps it held.
+            // The user held the button before « Maintenir le clic » started: the macro keeps it held.
+            // (Never for « Multi-clic »: its own clicks release the button anyway, and a click on the
+            // HUD needs its release.)
             Edge::Up if hand && self.held.contains(button) => Verdict::SWALLOW,
             Edge::Up => Verdict::PASS,
         }
@@ -302,11 +317,11 @@ mod tests {
         let now = t0();
         for source in [Source::Hand, Source::OtherProgram] {
             let mut g = MouseGuard::default();
-            g.watch(ButtonSet::only(Right).with(Middle));
+            g.watch(ButtonSet::only(Right).with(Middle), ButtonSet::EMPTY);
             // A left click on the HUD while the right and middle buttons are held.
             let v = g.on_event(Left, Edge::Down, source, true, now);
             assert_eq!(v, Verdict { swallow: true, stop: ButtonSet::only(Right).with(Middle), on_hud: true });
-            g.watch(ButtonSet::EMPTY);
+            g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
             assert_eq!(g.on_event(Left, Edge::Up, source, true, now), Verdict::SWALLOW, "{source:?}");
             assert!(!g.needs_hook());
             // Afterwards, clicks on the HUD reach it normally.
@@ -316,10 +331,55 @@ mod tests {
     }
 
     #[test]
+    fn during_the_clicks_a_click_on_the_hud_reaches_it() {
+        let now = t0();
+        for source in [Source::Hand, Source::OtherProgram] {
+            let mut g = MouseGuard::default();
+            g.watch(ButtonSet::EMPTY, ButtonSet::only(Left));
+            assert!(g.needs_hook());
+            // The clicked button itself, or another one: the HUD gets the whole click (D-27).
+            for button in [Left, Right] {
+                assert_eq!(g.on_event(button, Edge::Down, source, true, now), Verdict::PASS, "{source:?}");
+                assert_eq!(g.on_event(button, Edge::Up, source, true, now), Verdict::PASS, "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn during_the_clicks_a_real_click_of_their_button_elsewhere_stops_them() {
+        let now = t0();
+        let mut g = MouseGuard::default();
+        g.watch(ButtonSet::EMPTY, ButtonSet::only(Left));
+        // Another button, or another program: nothing to do.
+        assert_eq!(hand(&mut g, Right, Edge::Down, now), Verdict::PASS);
+        assert_eq!(hand(&mut g, Right, Edge::Up, now), Verdict::PASS);
+        assert_eq!(g.on_event(Left, Edge::Down, Source::OtherProgram, false, now), Verdict::PASS);
+        assert_eq!(g.on_event(Left, Edge::Up, Source::OtherProgram, false, now), Verdict::PASS);
+        // The user's hand on the clicked button: the macro stops, the click is consumed.
+        let v = hand(&mut g, Left, Edge::Down, now);
+        assert_eq!(v, Verdict { swallow: true, stop: ButtonSet::only(Left), on_hud: false });
+        g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
+        assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::SWALLOW);
+        assert!(!g.needs_hook());
+    }
+
+    #[test]
+    fn during_the_clicks_the_users_release_always_goes_through() {
+        let now = t0();
+        let mut g = MouseGuard::default();
+        // The user held the button when the clicks started: unlike a hold, nothing keeps it.
+        g.watch(ButtonSet::EMPTY, ButtonSet::only(Left));
+        assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::PASS);
+        // Whereas a hold takes it over.
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
+        assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::SWALLOW);
+    }
+
+    #[test]
     fn clicks_elsewhere_by_another_program_are_left_alone() {
         let now = t0();
         let mut g = MouseGuard::default();
-        g.watch(ButtonSet::only(Left));
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
         // Another program clicks the held button outside the HUD: not the user's hand, no stop.
         assert_eq!(g.on_event(Left, Edge::Down, Source::OtherProgram, false, now), Verdict::PASS);
         assert_eq!(g.on_event(Left, Edge::Up, Source::OtherProgram, false, now), Verdict::PASS);
@@ -343,12 +403,12 @@ mod tests {
     fn a_click_on_the_held_button_stops_the_macro_and_is_consumed() {
         let mut g = MouseGuard::default();
         let now = t0();
-        g.watch(ButtonSet::only(Left));
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
         assert!(g.needs_hook());
         let v = hand(&mut g, Left, Edge::Down, now);
         assert_eq!(v, Verdict { swallow: true, stop: ButtonSet::only(Left), on_hud: false });
         // The engine stops the macro: the button is no longer held.
-        g.watch(ButtonSet::EMPTY);
+        g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
         assert!(g.needs_hook(), "the release is still to swallow");
         assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::SWALLOW);
         assert!(!g.needs_hook());
@@ -361,10 +421,10 @@ mod tests {
     fn the_release_is_swallowed_even_if_it_comes_before_the_engine_reacts() {
         let mut g = MouseGuard::default();
         let now = t0();
-        g.watch(ButtonSet::only(Right));
+        g.watch(ButtonSet::only(Right), ButtonSet::EMPTY);
         assert!(hand(&mut g, Right, Edge::Down, now).swallow);
         assert_eq!(hand(&mut g, Right, Edge::Up, now), Verdict::SWALLOW);
-        g.watch(ButtonSet::EMPTY);
+        g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
         assert!(!g.needs_hook());
     }
 
@@ -372,7 +432,7 @@ mod tests {
     fn other_buttons_are_left_alone() {
         let mut g = MouseGuard::default();
         let now = t0();
-        g.watch(ButtonSet::only(Left));
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
         assert_eq!(hand(&mut g, Right, Edge::Down, now), Verdict::PASS);
         assert_eq!(hand(&mut g, Right, Edge::Up, now), Verdict::PASS);
         assert_eq!(hand(&mut g, Middle, Edge::Down, now), Verdict::PASS);
@@ -385,7 +445,7 @@ mod tests {
         let mut g = MouseGuard::default();
         let now = t0();
         assert_eq!(hand(&mut g, Left, Edge::Down, now), Verdict::PASS);
-        g.watch(ButtonSet::only(Left));
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
         // The user lets go: the macro keeps the button down.
         assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::SWALLOW);
         // A later click stops it as usual.
@@ -398,9 +458,9 @@ mod tests {
         // through, or the button would stay down.
         let mut g = MouseGuard::default();
         let now = t0();
-        g.watch(ButtonSet::only(Left));
+        g.watch(ButtonSet::only(Left), ButtonSet::EMPTY);
         assert!(hand(&mut g, Left, Edge::Down, now).swallow);
-        g.watch(ButtonSet::EMPTY);
+        g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
         assert_eq!(hand(&mut g, Left, Edge::Down, now), Verdict::PASS);
         assert_eq!(hand(&mut g, Left, Edge::Up, now), Verdict::PASS);
         assert!(!g.needs_hook());
@@ -410,9 +470,9 @@ mod tests {
     fn missed_releases_expire() {
         let mut g = MouseGuard::default();
         let start = t0();
-        g.watch(ButtonSet::only(Middle));
+        g.watch(ButtonSet::only(Middle), ButtonSet::EMPTY);
         assert!(hand(&mut g, Middle, Edge::Down, start).swallow);
-        g.watch(ButtonSet::EMPTY);
+        g.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
         g.expire(start + Duration::from_secs(1));
         assert!(g.needs_hook());
         g.expire(start + PENDING_RELEASE_TIMEOUT);
