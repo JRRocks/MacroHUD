@@ -99,6 +99,9 @@ Gabarit :
   nouveau bouton, fermeture, refus de Windows (appui ou relâchement), suspension et reprise, F9 sur le
   HUD refusé, décompte, une macro à la fois dans les deux sens, réglages (fichier de la 0.1.10, F9 déjà
   pris, rapidité hors bornes), bornes et libellés de la rapidité.
+  - CI, exécution n° 20 (commit `db3d80c`, le code de P2.1) : tout vert. Windows : clippy ; 135
+    tests ; compilation release avec `Cargo.lock` tel quel ; `MacroHUD.0.1.20.exe --version` répond
+    « MacroHUD 0.1.20 ». Le commit de fin qui suit refait tout et donne l'exécutable à essayer.
 - **Non vérifié sur le PC** : R27 à R34 ; la précision réelle de la minuterie (ligne « Minuterie du
   moteur » de `macrohud.log`) ; un jeu (R34).
 - **Problèmes et dette** : la rapidité ne se règle dans le HUD qu'après P2.3 ; d'ici là,
