@@ -16,12 +16,19 @@ session maître tranche et complète ce fichier, personne d'autre.
 - La capture de raccourci en cours : quelle macro attend une touche, ou aucune.
 - Un message ponctuel (raccourci enregistré, raccourci refusé, erreur), avec son niveau : info,
   avertissement ou erreur.
+  - Ajout du 2026-11-20 (D-16) : la macro qu'il concerne, s'il en concerne une. Un raccourci refusé
+    est un message de sorte « raccourci refusé », niveau avertissement, qui concerne la macro dont on
+    changeait le raccourci, avec la touche refusée et un texte court sur le modèle de la maquette :
+    « Alt+Tab est déjà pris par Windows. F8 reste actif. » Le HUD le montre comme la maquette :
+    encadré ambre titré « Raccourci refusé », triangle, bouton « Choisir une autre touche ».
 - Si le HUD est replié ou déplié.
 
 ## Ce que le HUD peut demander
 
 - Activer ou arrêter une macro.
-- Commencer la capture d'un nouveau raccourci pour une macro, ou l'annuler (Échap).
+- Commencer la capture d'un nouveau raccourci pour une macro, ou l'annuler (Échap). Ajout du
+  2026-11-20 : aussi depuis l'encadré « Raccourci refusé » (« Choisir une autre touche »), pour la
+  macro que ce message concerne.
 - Changer une option d'une macro (le bouton maintenu).
 - Replier ou déplier le HUD ; le déplacer en le glissant (position retenue).
 - Quitter MacroHUD (relâche d'abord tout ce qui est enfoncé).

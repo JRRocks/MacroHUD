@@ -21,6 +21,44 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Tests sur le PC et première livraison : MacroHUD 0.1.10
+
+- **Session** : maître
+- **Branche et commit** : `main` avancé de `9ee97a2` à `f9f8d4c` (avance rapide poussée du PC, pas de
+  fusion par GitHub), sommet de `claude/gifted-hypatia-g84kg1`, qui contient le HUD de
+  `claude/gifted-turing-0izrcw` ; CI n° 10 sur `main` → Release `v0.1.10`.
+- **Objectif** : faire vérifier sur le PC le travail des deux sessions cloud, puis livrer la première
+  version.
+- **Réalisé** :
+  - Avant chaque passage, halte confirmée de toutes les autres sessions Claude du PC (D-14) ; reprise
+    envoyée après chaque passage.
+  - Passage 1 (exécutable 0.1.5 : moteur, HUD provisoire) : 12 points OK, 1 échec (capture d'un
+    raccourci quand le HUD a le focus), 1 non vérifiable (vrai clic physique) ; deux réserves (clics sur
+    le HUD sans effet pendant un maintien droit ou milieu ; ligne « active » pendant l'attente de 3 s).
+    Corrigé par la session « programmation » (correctif 1).
+  - Passage 2 (exécutable 0.1.9, `f9f8d4c` : moteur corrigé, HUD variante 2) : 19 points OK, 0 échec,
+    1 non vérifiable (vrai clic) ; un défaut nouveau (P1.8) et des écarts à la maquette (P1.9).
+    Rapports et captures gardés sur le PC, hors du dépôt (`essais-prives/`).
+  - L'utilisateur choisit de publier tel quel et de corriger dans la version suivante (D-15). Écarts à
+    la maquette non retenus (D-16) ; choix des sessions cloud retenus (D-17). Contrat du HUD complété :
+    un message dit quelle macro il concerne ; sorte « raccourci refusé ».
+  - Contrôle « dépôt public » de tout ce qui partait dans `main` : identités `noreply` seulement, rien
+    à signaler.
+  - Release `v0.1.10` (`MacroHUD.0.1.10.exe`) ; miroir Drive mis à jour.
+  - Corrections envoyées : P1.8 et la partie contrat de P1.9 à « programmation », P1.9 à « visuel ».
+- **Décisions** : D-15, D-16, D-17.
+- **Vérifications** : passages 1 et 2 par la session « test » sur le PC (exécutable de la CI, souris et
+  clavier simulés, fenêtre d'essai qui compte les messages de la souris) ; CI n° 10 verte, l'exécutable
+  publié répond « MacroHUD 0.1.10 » dans la CI.
+- **Non vérifié sur le PC** : le vrai clic qui arrête la macro (R3) ; un jeu (R4, R17) ; l'échelle
+  d'affichage à 125 % et 150 % (R20) ; Win+E et AltGr+E (R6, R7).
+- **Problèmes et dette** : P1.8 (l'application ne reçoit pas le relâchement après un arrêt par le
+  HUD) ; P1.9 (écarts à la maquette).
+- **Prochaine étape** : correctifs des deux sessions cloud, passage 3 sur le PC (avec halte), accord de
+  l'utilisateur, livraison suivante.
+
+---
+
 ## 2026-11-20 · Correctif 1 : capture avec le HUD au premier plan, clics pendant un maintien, décompte
 
 - **Session** : programmation
