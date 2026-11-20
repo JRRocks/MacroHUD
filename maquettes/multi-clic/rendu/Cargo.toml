@@ -1,0 +1,14 @@
+[package]
+name = "maquette-multi-clic"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Rendus egui de l'aperçu « Multi-clic » (maquettes seulement, tâche P2.2)."
+
+# A workspace of its own: outside MacroHUD's build, tests and CI.
+[workspace]
+
+[dependencies]
+# egui, reached as `eframe::egui` like in `src/hud/`, whose files compile here unchanged.
+eframe = { package = "maquette-eframe", path = "eframe" }
+png = "0.18"

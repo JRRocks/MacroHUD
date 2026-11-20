@@ -1,15 +1,16 @@
-//! Building blocks of the HUD: clickable areas, keycap, button selector, small buttons, capture
-//! zone and message box. Each block paints exactly the mock-up measures (variant 2).
+//! Building blocks of the HUD: clickable areas, keycap, button selector, small buttons, speed
+//! slider, capture zone and message box. Each block paints exactly the mock-up measures (variant 2;
+//! for the slider, track A of the « Multi-clic » preview, D-26).
 
 use eframe::egui::{
-    Color32, CornerRadius, CursorIcon, Id, Painter, Rect, Response, Role, Sense, Shape, Stroke, StrokeKind, Ui,
-    WidgetInfo, pos2, vec2,
+    Color32, CornerRadius, CursorIcon, EventFilter, Id, Key, Painter, Rect, Response, Role, Sense, Shape, Stroke,
+    StrokeKind, Ui, WidgetInfo, pos2, vec2,
 };
 
 use super::icons::{self, Icon};
 use super::style as s;
 use super::text;
-use crate::contract::{MacroId, Message, MessageKind, MessageLevel, MouseButton};
+use crate::contract::{ClickRate, MacroId, Message, MessageKind, MessageLevel, MouseButton};
 
 /// Clickable area: hand cursor on hover, accessibility label, keyboard focus ring.
 pub fn clickable(ui: &Ui, rect: Rect, id: Id, label: &str, radius: u8) -> Response {
@@ -222,6 +223,96 @@ pub fn selector(ui: &Ui, p: &Painter, rect: Rect, id: Id, selected: MouseButton)
         text::put(p, &galley, left + check, segment.top(), segment.height());
     }
     chosen
+}
+
+// Speed of « Multi-clic »: slider from 1 to 15 (D-26, track A of maquettes/multi-clic) -----------
+
+/// The slider's line: the bounds on each side, the track, the thumb.
+pub const SLIDER_HEIGHT: f32 = 24.0;
+const THUMB_RADIUS: f32 = 8.0;
+
+/// The slider's track in its `line`, and the centre of the thumb for each speed: the thumb stays
+/// inside the track at both ends, one notch per speed.
+fn slider_track(line: Rect) -> (Rect, impl Fn(ClickRate) -> f32) {
+    let low = text::width(&ClickRate::MIN.per_second().to_string(), 12.0, s::MEDIUM);
+    let high = text::width(&ClickRate::MAX.per_second().to_string(), 12.0, s::MEDIUM);
+    let middle = line.center().y;
+    let track =
+        Rect::from_x_y_ranges((line.left() + low + 8.0)..=(line.right() - high - 8.0), (middle - 3.0)..=(middle + 3.0));
+    let (min, max) = (ClickRate::MIN.per_second() as f32, ClickRate::MAX.per_second() as f32);
+    let (start, end) = (track.left() + THUMB_RADIUS, track.right() - THUMB_RADIUS);
+    (track, move |rate: ClickRate| (start + (end - start) * (rate.per_second() as f32 - min) / (max - min)).round())
+}
+
+/// Centre of the thumb for `rate`, in a slider drawn in `line`.
+#[cfg(test)]
+pub fn slider_thumb(line: Rect, rate: ClickRate) -> eframe::egui::Pos2 {
+    let (_, x_of) = slider_track(line);
+    pos2(x_of(rate), line.center().y)
+}
+
+/// Every speed, slowest first.
+fn rates() -> impl Iterator<Item = ClickRate> {
+    (ClickRate::MIN.per_second()..=ClickRate::MAX.per_second()).map(ClickRate::new)
+}
+
+/// « 1 », the track with one notch per speed, « 15 »; the light part and the thumb show `rate`.
+/// A click or a drag on the track picks the nearest speed; with the keyboard focus, the arrows move
+/// it by one, Début and Fin to the bounds. Returns the speed chosen, if it changed.
+pub fn rate_slider(ui: &Ui, p: &Painter, line: Rect, id: Id, rate: ClickRate) -> Option<ClickRate> {
+    let (track, x_of) = slider_track(line);
+    let middle = line.center().y;
+    let bounds = [ClickRate::MIN, ClickRate::MAX].map(|r| r.per_second().to_string());
+    text::draw(p, &bounds[0], 12.0, s::MEDIUM, s::TEXT_2, line.left(), line.top(), line.height());
+    let high = text::line(p, &bounds[1], 12.0, s::MEDIUM, s::TEXT_2, f32::INFINITY);
+    text::put(p, &high, line.right() - high.size().x, line.top(), line.height());
+
+    let hit = Rect::from_x_y_ranges(track.x_range(), line.y_range());
+    let response = ui.interact(hit, id, Sense::click_and_drag());
+    let hot = response.hovered() || response.dragged();
+    if hot {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    let value = f64::from(rate.per_second());
+    response.widget_info(move || WidgetInfo::slider(true, value, "Rapidité, en clics par seconde"));
+    let mut chosen = None;
+    if (response.clicked() || response.dragged())
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        chosen = rates().min_by(|&a, &b| (x_of(a) - pointer.x).abs().total_cmp(&(x_of(b) - pointer.x).abs()));
+    }
+    if response.has_focus() {
+        // The arrows change the speed instead of moving the focus.
+        let filter = EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+        ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
+        let step = |key: Key| ui.input(|i| i.key_pressed(key));
+        let current = rate.per_second();
+        if step(Key::ArrowLeft) || step(Key::ArrowDown) {
+            chosen = Some(ClickRate::new(current.saturating_sub(1)));
+        } else if step(Key::ArrowRight) || step(Key::ArrowUp) {
+            chosen = Some(ClickRate::new(current + 1));
+        } else if step(Key::Home) {
+            chosen = Some(ClickRate::MIN);
+        } else if step(Key::End) {
+            chosen = Some(ClickRate::MAX);
+        }
+    }
+
+    p.rect_filled(track, 3, s::CONTROL);
+    let x = x_of(rate);
+    p.rect_filled(Rect::from_x_y_ranges(track.left()..=x, track.y_range()), 3, s::KEY);
+    for notch in rates() {
+        p.vline(x_of(notch) + 0.5, (middle + 6.0)..=(middle + 9.0), Stroke::new(1.0, s::STRIPE));
+    }
+    let thumb = pos2(x, middle);
+    if hot {
+        p.circle_filled(thumb, THUMB_RADIUS + 4.0, Color32::from_white_alpha(36));
+    }
+    p.circle(thumb, THUMB_RADIUS, s::KEY, Stroke::new(1.0, s::KEY_LIP));
+    if response.has_focus() {
+        p.circle_stroke(thumb, THUMB_RADIUS + 3.0, Stroke::new(2.0, s::FOCUS));
+    }
+    chosen.filter(|&new| new != rate)
 }
 
 // Shortcut capture -----------------------------------------------------------------------------

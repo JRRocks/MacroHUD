@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MacroHUD · aperçu de « Multi-clic »</title>
+<style>
+*{box-sizing:border-box}
+html{background:#e7e5e0}
+body{margin:0;color:#1c1d20;font:16px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:28px;line-height:1.2;margin:0 0 10px;letter-spacing:-.01em}
+h2{font-size:22px;line-height:1.25;margin:0 0 8px}
+h3{font-size:16px;margin:16px 0 4px}
+p{margin:0 0 10px}
+.intro{max-width:780px;color:#3f4147}
+section{background:#f7f6f3;border:1px solid #d3d0c9;border-radius:14px;padding:18px 16px 20px;margin-top:22px}
+.lettre{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;margin-right:10px;border-radius:9px;background:#1c1d20;color:#fff;font-weight:800;vertical-align:-6px}
+.reco{margin:12px 0 0;padding:12px 14px;border-left:4px solid #1f9b57;background:#e3f2e8;border-radius:0 8px 8px 0}
+.badge{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:#1f9b57;color:#fff;font-size:13px;font-weight:700;vertical-align:3px}
+.pour-contre{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:4px 24px;margin:6px 0 14px;max-width:960px}
+.pour-contre ul{margin:0;padding-left:20px}
+.pour-contre h3{margin-top:6px}
+.vues{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:16px;margin-top:10px}
+figure{margin:0}
+.tuile{display:flex;justify-content:center;padding:6px 0;border-radius:10px;background:#6e7782}
+.tuile img{display:block;max-width:100%;height:auto}
+figcaption{margin-top:6px;font-size:15px;line-height:1.4;color:#2b2d32}
+figcaption b{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:6px;border-radius:6px;background:#1c1d20;color:#fff;font-size:13px}
+.fixe{margin:6px 0 0;padding-left:20px;max-width:900px}
+.questions{margin:6px 0 0;padding-left:24px;max-width:900px}
+.questions>li{margin-top:14px}
+.questions>li::marker{font-weight:800}
+.questions .q{font-weight:700;margin:0 0 4px}
+.questions ul{margin:0;padding-left:20px}
+.questions ul li{margin-top:3px}
+.note{font-size:14px;color:#55585f;max-width:900px}
+code{font:14px/1.4 Consolas,"Cascadia Mono",monospace;background:#ebe8e2;padding:1px 4px;border-radius:4px}
+@media (max-width:480px){
+  main{padding:18px 12px 32px}
+  h1{font-size:24px}
+  section{padding:14px 10px 16px}
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Aperçu : « Multi-clic » dans le HUD</h1>
+<p class="intro">La deuxième macro, « Multi-clic », clique sans arrêt avec le bouton choisi, là où est la souris, jusqu'à ce qu'on l'arrête (D-18). Voici le HUD d'aujourd'hui, puis le HUD à deux macros avec trois façons de régler la rapidité. Rien n'est codé avant ton choix : les questions sont en bas de la page.</p>
+
+<section>
+<h2>Aujourd'hui</h2>
+<p>Le HUD livré (variante 2) avec sa seule macro. Ces deux images sont rendues par le code actuel du HUD, pas redessinées.</p>
+<div class="vues">
+<figure>
+<div class="tuile"><img src="{{aujourdhui-1-reglages}}" width="{{aujourdhui-1-reglages.l}}" height="{{aujourdhui-1-reglages.h}}" alt="Le HUD actuel : « Maintenir le clic », arrêtée, réglages ouverts : bouton maintenu Gauche, raccourci F8."></div>
+<figcaption><b>1</b>Réglages ouverts, macro arrêtée.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{aujourdhui-2-active}}" width="{{aujourdhui-2-active.l}}" height="{{aujourdhui-2-active.h}}" alt="Le HUD actuel : « Maintenir le clic » active, ligne verte « Active · gauche enfoncé »."></div>
+<figcaption><b>2</b>Active : le bouton gauche est enfoncé.</figcaption>
+</figure>
+</div>
+</section>
+
+<section>
+<h2>Avec « Multi-clic » : trois façons de régler la rapidité</h2>
+<p>Deux lignes : « Maintenir le clic » (F8) et « Multi-clic » (F9). Les réglages de « Multi-clic » : le bouton cliqué (Gauche, Droit, Milieu), comme pour le maintien, puis la rapidité, puis le raccourci. Mêmes couleurs, polices et tailles que la variante 2 ; d'une piste à l'autre, seul le réglage de la rapidité change.</p>
+<p>Pour chaque piste, trois vues : réglages ouverts, macro arrêtée ; macro active, la souris ailleurs ; macro active, la souris sur le HUD (la flèche blanche), où ses clics se mettent en pause.</p>
+<p class="reco"><strong>Ma recommandation : A, le curseur.</strong> Un seul geste couvre toute la plage, qu'on voit avant de toucher, et le chiffre exact reste écrit ; c'est le réglage que Windows donne à la vitesse de répétition du clavier.</p>
+</section>
+
+<section>
+<h2><span class="lettre">A</span>Un curseur de 1 à 15<span class="badge">recommandé</span></h2>
+<div class="pour-contre">
+<div>
+<h3>Pour</h3>
+<ul>
+<li>La plage se voit avant de toucher : « 1 » et « 15 » aux bouts, un cran par valeur (Library UI/UX, ch. 19 : annoncer les règles avant la saisie).</li>
+<li>N'importe quelle valeur d'un seul glissé, ou d'un clic sur la piste.</li>
+<li>Un réglage courant : Windows règle ainsi la vitesse de répétition du clavier (ch. 5 : cohérence et standards ; ch. 41 : n'innover que si l'avantage est net).</li>
+<li>Le chiffre exact est écrit au-dessus : pas besoin de le deviner d'après la position de la poignée (ch. 5 : visibilité de l'état du système).</li>
+</ul>
+</div>
+<div>
+<h3>Contre</h3>
+<ul>
+<li>Viser un cran précis demande un peu d'attention : 15 crans sur environ 210 px, un tous les 15 px (ch. 6, loi de Fitts).</li>
+</ul>
+</div>
+</div>
+<div class="vues">
+<figure>
+<div class="tuile"><img src="{{a-1-reglages}}" width="{{a-1-reglages.l}}" height="{{a-1-reglages.h}}" alt="Piste A, macro arrêtée : sous « Bouton cliqué », la ligne « Rapidité 10 clics/s » et un curseur entre 1 et 15, placé sur 10."></div>
+<figcaption><b>1</b>Réglages ouverts, macro arrêtée.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{a-2-active}}" width="{{a-2-active.l}}" height="{{a-2-active.h}}" alt="Piste A, macro active : ligne verte « Active · gauche, 10/s »."></div>
+<figcaption><b>2</b>Active, la souris ailleurs : 10 clics par seconde, bouton gauche.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{a-3-en-pause}}" width="{{a-3-en-pause.l}}" height="{{a-3-en-pause.h}}" alt="Piste A, souris sur la poignée du curseur : ligne verte « En pause · souris ici » avec deux barres."></div>
+<figcaption><b>3</b>Active, la souris sur le curseur : les clics attendent qu'elle sorte du HUD ; la nouvelle rapidité compte dès le clic suivant.</figcaption>
+</figure>
+</div>
+</section>
+
+<section>
+<h2><span class="lettre">B</span>Des boutons − et + autour de la valeur</h2>
+<div class="pour-contre">
+<div>
+<h3>Pour</h3>
+<ul>
+<li>Chaque clic change la rapidité d'exactement 1, le pas fixé (D-22) ; aucune visée fine : les boutons font 40 × 24 px (ch. 6, loi de Fitts).</li>
+<li>À 1 ou à 15, le bouton s'éteint : on ne peut pas sortir de la plage (ch. 5 : prévenir l'erreur).</li>
+<li>La plus compacte des trois.</li>
+</ul>
+</div>
+<div>
+<h3>Contre</h3>
+<ul>
+<li>La plage ne se voit pas ; d'où « de 1 à 15 » écrit au-dessus.</li>
+<li>Aller de 1 à 15 demande 14 clics.</li>
+</ul>
+</div>
+</div>
+<div class="vues">
+<figure>
+<div class="tuile"><img src="{{b-1-reglages}}" width="{{b-1-reglages.l}}" height="{{b-1-reglages.h}}" alt="Piste B, macro arrêtée : ligne « Rapidité, de 1 à 15 », puis un bouton moins, « 10 clics/s » et un bouton plus."></div>
+<figcaption><b>1</b>Réglages ouverts, macro arrêtée.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{b-2-active}}" width="{{b-2-active.l}}" height="{{b-2-active.h}}" alt="Piste B, macro active : ligne verte « Active · gauche, 10/s »."></div>
+<figcaption><b>2</b>Active, la souris ailleurs : 10 clics par seconde, bouton gauche.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{b-3-en-pause}}" width="{{b-3-en-pause.l}}" height="{{b-3-en-pause.h}}" alt="Piste B, souris sur le bouton plus : ligne verte « En pause · souris ici » avec deux barres."></div>
+<figcaption><b>3</b>Active, la souris sur « + » : les clics attendent qu'elle sorte du HUD ; la nouvelle rapidité compte dès le clic suivant.</figcaption>
+</figure>
+</div>
+</section>
+
+<section>
+<h2><span class="lettre">C</span>Trois préréglages et un réglage fin</h2>
+<div class="pour-contre">
+<div>
+<h3>Pour</h3>
+<ul>
+<li>Trois mots qu'on comprend sans connaître les chiffres : Lent (5), Moyen (10), Rapide (15) (ch. 5 : reconnaître plutôt que se rappeler).</li>
+<li>Trois choix seulement, vite faits (ch. 6, loi de Hick) ; « Réglage fin » pour la valeur exacte.</li>
+</ul>
+</div>
+<div>
+<h3>Contre</h3>
+<ul>
+<li>Deux réglages pour une seule valeur ; à 7 clics/s, aucun préréglage n'est coché, ce qui peut dérouter.</li>
+<li>La plus haute des trois : 34 px de plus que B.</li>
+</ul>
+</div>
+</div>
+<div class="vues">
+<figure>
+<div class="tuile"><img src="{{c-1-reglages}}" width="{{c-1-reglages.l}}" height="{{c-1-reglages.h}}" alt="Piste C, macro arrêtée : « Rapidité 10 clics/s », les préréglages Lent, Moyen (coché) et Rapide, puis « Réglage fin » avec un bouton moins et un bouton plus."></div>
+<figcaption><b>1</b>Réglages ouverts, macro arrêtée.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{c-2-active}}" width="{{c-2-active.l}}" height="{{c-2-active.h}}" alt="Piste C, macro active : ligne verte « Active · gauche, 10/s »."></div>
+<figcaption><b>2</b>Active, la souris ailleurs : 10 clics par seconde, bouton gauche.</figcaption>
+</figure>
+<figure>
+<div class="tuile"><img src="{{c-3-en-pause}}" width="{{c-3-en-pause.l}}" height="{{c-3-en-pause.h}}" alt="Piste C, souris sur le plus du réglage fin : ligne verte « En pause · souris ici » avec deux barres."></div>
+<figcaption><b>3</b>Active, la souris sur « + » : les clics attendent qu'elle sorte du HUD ; la nouvelle rapidité compte dès le clic suivant.</figcaption>
+</figure>
+</div>
+</section>
+
+<section>
+<h2>Déjà décidé, pour mémoire</h2>
+<ul class="fixe">
+<li>F9 par défaut, à changer dans le HUD comme F8 (D-22).</li>
+<li>« Activer » dans le HUD attend 3 s, comme pour le maintien ; la touche F9 avec la souris sur le HUD est refusée (D-22).</li>
+<li>Une macro à la fois : en activer une arrête l'autre, bouton relâché (D-20).</li>
+<li>Un vrai clic du bouton qu'utilise « Multi-clic » l'arrête, et ce clic n'est pas transmis ; les autres boutons passent (D-19).</li>
+<li>Aucun clic automatique n'atteint le HUD : pause tant que la souris y est, reprise quand elle en sort (D-22).</li>
+<li>Bouton et rapidité sont gardés pour le prochain lancement (D-22).</li>
+</ul>
+</section>
+
+<section>
+<h2>Questions</h2>
+<p>Ma recommandation est la première de chaque liste. Une réponse courte suffit, par exemple : « 1 A, 2 et 3 comme recommandé, 4 garder ».</p>
+<ol class="questions">
+<li>
+<p class="q">Quelle façon de régler la rapidité ?</p>
+<ul>
+<li><strong>A, le curseur de 1 à 15 (recommandé)</strong> : toute la plage d'un geste, le chiffre écrit, comme dans Windows.</li>
+<li>B, les boutons − et + autour de la valeur.</li>
+<li>C, les préréglages Lent (5), Moyen (10), Rapide (15) et un réglage fin ; tu peux aussi corriger ces trois chiffres.</li>
+</ul>
+</li>
+<li>
+<p class="q">Le texte de la ligne de « Multi-clic » ?</p>
+<ul>
+<li><strong>« Active · gauche, 10/s » et, arrêtée, « Arrêtée · gauche, 10/s » (recommandé)</strong> : le bouton et la rapidité tiennent dans la ligne, pour tous les boutons et toutes les rapidités.</li>
+<li>« Active · 10 clics/s » et « Arrêtée · 10 clics/s » : plus parlant, mais le bouton ne se voit plus quand les réglages sont fermés.</li>
+<li>« Active · 10 clics/s, gauche », l'exemple du cadrage, ne tient pas : à côté de la touche F9, la ligne a 143 px de place et cette phrase en demande 150 ; elle serait coupée en « … ».</li>
+</ul>
+</li>
+<li>
+<p class="q">Montrer que les clics sont en pause quand la souris est sur le HUD ?</p>
+<ul>
+<li><strong>Oui (recommandé)</strong> : « En pause · souris ici », avec deux barres ; la ligne reste verte, car la macro tourne toujours, et le HUD ne change pas de taille. Sans cela, en venant régler la rapidité, on croirait la macro en panne (ch. 41 : le système montre ce qui se passe).</li>
+<li>Non : la ligne reste « Active · gauche, 10/s ».</li>
+</ul>
+</li>
+<li>
+<p class="q">La plage : de 1 à 15 clics par seconde, par pas de 1, 10 par défaut (D-22) ?</p>
+<ul>
+<li><strong>La garder (recommandé)</strong> : au doigt, même un très bon joueur dépasse rarement 15 clics par seconde.</li>
+<li>La corriger : donne le minimum, le maximum et la valeur par défaut.</li>
+</ul>
+</li>
+</ol>
+</section>
+
+<p class="note">Images : rendus egui des fichiers du HUD (police Inter, couleurs et tailles de la variante 2), dessinés à 200 % ; les PNG sont à côté de cette page, dans <code>maquettes/multi-clic/</code>. Ceux d'« Aujourd'hui » viennent du test de rendu de MacroHUD ; les autres, de <code>maquettes/multi-clic/rendu/</code> (voir <code>maquettes/LISEZMOI.md</code>).</p>
+
+</main>
+</body>
+</html>

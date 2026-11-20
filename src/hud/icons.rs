@@ -20,6 +20,8 @@ pub enum Icon {
     Error,
     /// Mouse, left button filled.
     Mouse,
+    /// Two upright bars: the clicks of « Multi-clic » wait (mouse on the HUD, D-26).
+    Pause,
 }
 
 /// Paints `icon` centred in `rect`, scaled to the smaller side.
@@ -80,6 +82,15 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             }
             p.add(Shape::convex_polygon(button, color, Stroke::NONE));
             p.line_segment([at(3.5, 6.5), at(12.5, 6.5)], line);
+        }
+        Icon::Pause => {
+            // Drawn on ninths of the box, as in the chosen mock-up (9 px: bars 3 px wide, 2 px apart,
+            // 0.5 px from the sides, 1 px corners).
+            let ninth = 16.0 / 9.0;
+            for left in [0.5, 5.5] {
+                let bar = Rect::from_min_max(at(left * ninth, 0.0), at((left + 3.0) * ninth, 16.0));
+                p.rect_filled(bar, radius(ninth), color);
+            }
         }
     }
 }
