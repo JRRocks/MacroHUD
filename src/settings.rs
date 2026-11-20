@@ -1,5 +1,6 @@
-//! Settings, in `%APPDATA%\MacroHUD\reglages.json`: each macro's hotkey and options, the HUD's
-//! position and whether it is collapsed.
+//! Settings, in `%APPDATA%\MacroHUD\reglages.json`: each macro's hotkey and options (the button;
+//! for « Multi-clic », also `clicks_per_second`), the HUD's position and whether it is collapsed.
+//! A file written before a macro existed simply has no entry for it: the macro gets its defaults.
 //!
 //! A missing file gives the default values. A damaged one too, without crashing: it is kept aside
 //! under another name, and only the damaged values are replaced when the file is merely partly wrong.
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use crate::contract::{MacroId, MacroOptions, MouseButton};
+use crate::contract::{ClickRate, MacroId, MacroOptions, MouseButton};
 use crate::hotkey::{self, Hotkey, Modifiers, Vk};
 use crate::macros::MacroDef;
 
@@ -156,18 +157,25 @@ pub fn parse(bytes: &[u8], catalog: &[MacroDef]) -> Result<(Settings, bool), ()>
                 None => intact = false,
             }
         }
-        match (def.default_options, obj.get("button")) {
-            (_, None) => {}
-            (MacroOptions::HoldClick { .. }, Some(b)) => match b.as_str().and_then(button_from_key) {
-                Some(button) => entry.options = MacroOptions::HoldClick { button },
+        if let Some(b) = obj.get("button") {
+            match b.as_str().and_then(button_from_key) {
+                Some(button) => entry.options = entry.options.with_button(button),
                 None => intact = false,
-            },
+            }
+        }
+        if let (MacroOptions::MultiClick { .. }, Some(r)) = (def.default_options, obj.get("clicks_per_second")) {
+            match r.as_u64().and_then(ClickRate::exact) {
+                Some(rate) => entry.options = entry.options.with_rate(rate),
+                None => intact = false,
+            }
         }
     }
-    // Two macros cannot share a hotkey: the later one gets its default back.
+    // Two macros cannot share a hotkey: the later one gets its default back. If its default is the
+    // earlier one's (chosen by the user before this macro existed), it keeps it: the engine makes it
+    // unavailable and says why until another is chosen, and the file is not damaged for all that.
     for (i, def) in catalog.iter().enumerate().skip(1) {
         let (earlier, later) = settings.macros.split_at_mut(i);
-        if earlier.iter().any(|m| m.hotkey == later[0].hotkey) {
+        if earlier.iter().any(|m| m.hotkey == later[0].hotkey) && later[0].hotkey != def.default_hotkey {
             later[0].hotkey = def.default_hotkey;
             intact = false;
         }
@@ -232,6 +240,10 @@ pub fn to_json(settings: &Settings, label: &dyn Fn(&Hotkey) -> String) -> String
             MacroOptions::HoldClick { button } => {
                 entry.insert("button".into(), json!(button_key(button)));
             }
+            MacroOptions::MultiClick { button, rate } => {
+                entry.insert("button".into(), json!(button_key(button)));
+                entry.insert("clicks_per_second".into(), json!(rate.per_second()));
+            }
         }
         macros.insert(m.id.0.to_string(), Value::Object(entry));
     }
@@ -264,7 +276,7 @@ pub fn save(dir: &Path, settings: &Settings, label: &dyn Fn(&Hotkey) -> String) 
 mod tests {
     use super::*;
     use crate::hotkey::{Modifier, vk};
-    use crate::macros::{CATALOG, HOLD_CLICK};
+    use crate::macros::{CATALOG, HOLD_CLICK, MULTI_CLICK};
 
     fn label(h: &Hotkey) -> String {
         h.label(&|_| None)
@@ -292,6 +304,9 @@ mod tests {
         let m = s.macro_settings(MacroId::HOLD_CLICK).unwrap();
         assert_eq!(m.hotkey, Hotkey::F8);
         assert_eq!(m.options, MacroOptions::HoldClick { button: MouseButton::Left });
+        let m = s.macro_settings(MacroId::MULTI_CLICK).unwrap();
+        assert_eq!(m.hotkey, Hotkey::F9);
+        assert_eq!(m.options, MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT });
     }
 
     #[test]
@@ -309,11 +324,14 @@ mod tests {
         s.collapsed = true;
         s.macros[0].hotkey = Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl).with(Modifier::Alt), vk::KEY_M);
         s.macros[0].options = MacroOptions::HoldClick { button: MouseButton::Middle };
+        s.macros[1].hotkey = Hotkey::new(Modifiers::NONE.with(Modifier::Shift), vk::F7);
+        s.macros[1].options = MacroOptions::MultiClick { button: MouseButton::Right, rate: ClickRate::MAX };
         let path = save(&dir, &s, &label).unwrap();
         assert!(path.ends_with(FILE_NAME));
         assert!(!dir.join("reglages.json.tmp").exists());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("\"label\": \"Ctrl+Alt+M\""), "{text}");
+        assert!(text.contains("\"clicks_per_second\": 15"), "{text}");
         let loaded = load(&dir, CATALOG, "x");
         assert_eq!(loaded, Loaded { settings: s, warning: None, rewrite: false });
     }
@@ -397,5 +415,64 @@ mod tests {
         assert_eq!(s.macros[0].hotkey.key, vk::F9);
         assert_eq!(s.macros[1].hotkey, catalog[1].default_hotkey);
         assert_eq!(s.macros[1].hotkey.key, vk::F9 + 1);
+    }
+
+    /// A file of version 0.1.10, written before « Multi-clic » existed: nothing is lost, nothing is
+    /// called damaged, « Multi-clic » gets its defaults.
+    #[test]
+    fn a_file_from_before_multi_click_reads_back_whole() {
+        let text = r#"{
+  "format": 1,
+  "hud": { "position": { "x": 1500, "y": 24 }, "collapsed": true },
+  "macros": {
+    "maintenir-clic": {
+      "button": "right",
+      "hotkey": { "alt": false, "ctrl": true, "key": 77, "label": "Ctrl+M", "shift": false, "win": false }
+    }
+  }
+}"#;
+        let (s, intact) = parse(text.as_bytes(), CATALOG).unwrap();
+        assert!(intact);
+        assert_eq!((s.position, s.collapsed), (Some((1500, 24)), true));
+        assert_eq!(s.macros[0].hotkey, Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::KEY_M));
+        assert_eq!(s.macros[0].options, MacroOptions::HoldClick { button: MouseButton::Right });
+        assert_eq!(
+            s.macros[1],
+            MacroSettings { id: MULTI_CLICK.id, hotkey: Hotkey::F9, options: MULTI_CLICK.default_options }
+        );
+        assert!(s.unknown_macros.is_empty());
+        // F9 chosen for « Maintenir le clic » back then: « Multi-clic » keeps its F9 (the engine makes
+        // it unavailable until another key is chosen), without calling the file damaged.
+        let text = r#"{ "macros": { "maintenir-clic": { "hotkey": { "key": 120 } } } }"#;
+        let (s, intact) = parse(text.as_bytes(), CATALOG).unwrap();
+        assert!(intact);
+        assert_eq!((s.macros[0].hotkey, s.macros[1].hotkey), (Hotkey::F9, Hotkey::F9));
+    }
+
+    #[test]
+    fn the_speed_of_multi_click_is_kept_and_checked() {
+        let text = r#"{ "macros": { "multi-clic": { "button": "middle", "clicks_per_second": 3 } } }"#;
+        let (s, intact) = parse(text.as_bytes(), CATALOG).unwrap();
+        assert!(intact);
+        assert_eq!(
+            s.macros[1].options,
+            MacroOptions::MultiClick { button: MouseButton::Middle, rate: ClickRate::new(3) }
+        );
+        for wrong in ["0", "16", "2.5", "\"vite\"", "-1"] {
+            let text =
+                format!(r#"{{ "macros": {{ "multi-clic": {{ "button": "right", "clicks_per_second": {wrong} }} }} }}"#);
+            let (s, intact) = parse(text.as_bytes(), CATALOG).unwrap();
+            assert!(!intact, "{wrong}");
+            assert_eq!(
+                s.macros[1].options,
+                MacroOptions::MultiClick { button: MouseButton::Right, rate: ClickRate::DEFAULT },
+                "{wrong}: the speed takes its default, the button stays"
+            );
+        }
+        // A speed means nothing to « Maintenir le clic »: ignored there.
+        let text = r#"{ "macros": { "maintenir-clic": { "clicks_per_second": 3 } } }"#;
+        let (s, intact) = parse(text.as_bytes(), CATALOG).unwrap();
+        assert!(intact);
+        assert_eq!(s.macros[0].options, MacroOptions::HoldClick { button: MouseButton::Left });
     }
 }

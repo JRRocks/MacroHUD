@@ -46,7 +46,9 @@ use windows_sys::Win32::System::Diagnostics::Debug::{EXCEPTION_POINTERS, SetUnha
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, GetCurrentThread, GetCurrentThreadId, INFINITE, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateMutexW, CreateWaitableTimerExW, GetCurrentThread, GetCurrentThreadId,
+    INFINITE, SetThreadPriority, SetWaitableTimer, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_TIME_CRITICAL,
+    TIMER_ALL_ACCESS,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, HKL, INPUT, INPUT_0, INPUT_MOUSE, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, MOD_ALT,
@@ -169,7 +171,8 @@ fn button_index(button: MouseButton) -> usize {
     }
 }
 
-fn press(button: MouseButton) -> Result<(), String> {
+/// Presses the button; `log`: with a line in the run log (not for each click of « Multi-clic »).
+fn press(button: MouseButton, log: bool) -> Result<(), String> {
     let bit = ButtonSet::only(button).bits();
     // Recorded before the press: whatever happens next, the emergency release knows about it.
     HELD.fetch_or(bit, Ordering::SeqCst);
@@ -180,7 +183,7 @@ fn press(button: MouseButton) -> Result<(), String> {
     if result.is_err() {
         HELD.fetch_and(!bit, Ordering::SeqCst);
         PRESS_WINDOW[button_index(button)].store(0, Ordering::SeqCst);
-    } else {
+    } else if log {
         crate::log::write(format!("Appui du {} : fenêtre sous le curseur {}.", button_name(button), describe(target)));
     }
     result
@@ -200,15 +203,20 @@ fn adopt(button: MouseButton) {
     ));
 }
 
-fn release(button: MouseButton) -> Result<(), String> {
+/// Releases the button, and sends the release to the window of the press when Windows would not
+/// bring it there (P1.8). `log`: with a line in the run log. `Ok(true)`: it had to be sent.
+fn release(button: MouseButton, log: bool) -> Result<bool, String> {
     let index = button_index(button);
     // Looked at before the release: the application lets the capture go once it gets it.
     let scene = Scene::now(PRESS_WINDOW[index].load(Ordering::SeqCst));
     inject(button, false)?;
     HELD.fetch_and(!ButtonSet::only(button).bits(), Ordering::SeqCst);
     PRESS_WINDOW[index].store(0, Ordering::SeqCst);
-    crate::log::write(scene.deliver(button));
-    Ok(())
+    let delivery = scene.deliver(button);
+    if log {
+        crate::log::write(scene.line(button, &delivery));
+    }
+    Ok(delivery == Delivery::Sent)
 }
 
 /// Releases every button MacroHUD holds, from any thread; returns those it released.
@@ -221,8 +229,9 @@ pub fn emergency_release() -> ButtonSet {
         let _ = inject(button, false);
     }
     for button in held.iter() {
-        let press_window = PRESS_WINDOW[button_index(button)].swap(0, Ordering::SeqCst);
-        crate::log::write_now(Scene::now(press_window).deliver(button));
+        let scene = Scene::now(PRESS_WINDOW[button_index(button)].swap(0, Ordering::SeqCst));
+        let delivery = scene.deliver(button);
+        crate::log::write_now(scene.line(button, &delivery));
     }
     held
 }
@@ -249,6 +258,21 @@ fn post_release(window: isize, button: MouseButton) -> Result<(), u32> {
     } else {
         Err(last_error())
     }
+}
+
+/// What became of a release, for the window of the press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivery {
+    /// No press window known.
+    Unknown,
+    /// Windows brings the release there by itself.
+    Reaches,
+    /// The window closed meanwhile.
+    Closed,
+    /// Sent to it as well.
+    Sent,
+    /// Sending it was refused (error code).
+    Refused(u32),
 }
 
 /// The windows involved in a release, for the decision and for the run log.
@@ -278,20 +302,31 @@ impl Scene {
     }
 
     /// Once the button is released: sends the release to the press window when Windows does not
-    /// bring it there (P1.8, see [`guard::release_reaches`]); returns the run log's line.
-    fn deliver(&self, button: MouseButton) -> String {
-        let outcome = if self.press == 0 {
-            "fenêtre de l'appui inconnue".to_string()
+    /// bring it there (P1.8, see [`guard::release_reaches`]).
+    fn deliver(&self, button: MouseButton) -> Delivery {
+        if self.press == 0 {
+            Delivery::Unknown
         } else if self.reaches {
-            "le relâchement lui parvient".to_string()
+            Delivery::Reaches
         } else if thread_of(self.press) != self.press_thread {
             // Closed meanwhile (its handle may even name another window now).
-            "fenêtre de l'appui fermée, rien à lui envoyer".to_string()
+            Delivery::Closed
         } else {
             match post_release(self.press, button) {
-                Ok(()) => "relâchement envoyé aussi à la fenêtre de l'appui".to_string(),
-                Err(code) => format!("envoi à la fenêtre de l'appui refusé (erreur {code})"),
+                Ok(()) => Delivery::Sent,
+                Err(code) => Delivery::Refused(code),
             }
+        }
+    }
+
+    /// The run log's line about a release and its delivery.
+    fn line(&self, button: MouseButton, delivery: &Delivery) -> String {
+        let outcome = match delivery {
+            Delivery::Unknown => "fenêtre de l'appui inconnue".to_string(),
+            Delivery::Reaches => "le relâchement lui parvient".to_string(),
+            Delivery::Closed => "fenêtre de l'appui fermée, rien à lui envoyer".to_string(),
+            Delivery::Sent => "relâchement envoyé aussi à la fenêtre de l'appui".to_string(),
+            Delivery::Refused(code) => format!("envoi à la fenêtre de l'appui refusé (erreur {code})"),
         };
         format!(
             "Relâchement du {} : sous le curseur {} ; fenêtre de l'appui {}, capture de son fil : {}, au premier plan : {} → {outcome}.",
@@ -765,7 +800,7 @@ impl Backend for WindowsBackend {
     }
 
     fn press(&mut self, button: MouseButton) -> Result<(), String> {
-        press(button)
+        press(button, true)
     }
 
     fn adopt(&mut self, button: MouseButton) {
@@ -773,7 +808,15 @@ impl Backend for WindowsBackend {
     }
 
     fn release(&mut self, button: MouseButton) -> Result<(), String> {
-        release(button)
+        release(button, true).map(|_| ())
+    }
+
+    fn click_down(&mut self, button: MouseButton) -> Result<(), String> {
+        press(button, false)
+    }
+
+    fn click_up(&mut self, button: MouseButton) -> Result<bool, String> {
+        release(button, false)
     }
 
     fn pointer_on_hud(&self) -> bool {
@@ -887,30 +930,30 @@ fn engine_main(
             None
         }
     };
+    unsafe {
+        // The clicks of « Multi-clic » keep their beat even when a game keeps the processor busy.
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    }
+    let timer = PreciseTimer::new();
+    crate::log::write(if timer.high_resolution {
+        "Minuterie du moteur : haute résolution (à la milliseconde)."
+    } else {
+        "Minuterie du moteur : ordinaire (ce Windows n'a pas la haute résolution) ; les clics gardent leur battement."
+    });
     let mut engine = Engine::new(WindowsBackend { hooks, hud, next_id: 0 }, &setup);
     engine.start();
     publisher.publish(engine.snapshot());
 
     let mut msg = MSG::default();
     'run: loop {
-        let timeout = match engine.next_deadline() {
-            Some(at) => {
-                // Rounded up: waking a little early would only mean waking again at once.
-                let wait = at.saturating_duration_since(Instant::now()).as_millis() + 1;
-                u32::try_from(wait).unwrap_or(INFINITE - 1)
-            }
-            None => INFINITE,
-        };
-        unsafe {
-            MsgWaitForMultipleObjectsEx(0, null(), timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        }
+        timer.wait(engine.next_deadline());
         // A macro switched by its hotkey or by a real click: the user is in another window (a game,
         // maybe always on top itself), so the HUD comes back above it to show the change.
         let mut raise = false;
         while unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             match msg.message {
                 WM_HOTKEY => {
-                    crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
+                    crate::crash::crash_test_point(engine.guarded_buttons());
                     engine.event(Event::Hotkey(msg.wParam as HotkeyId), Instant::now());
                     raise = true;
                 }
@@ -922,7 +965,7 @@ fn engine_main(
             match inputs.try_recv() {
                 Ok(Input::Command(command)) => {
                     if matches!(command, Command::Stop(_)) {
-                        crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
+                        crate::crash::crash_test_point(engine.guarded_buttons());
                     }
                     engine.command(command, Instant::now());
                 }
@@ -940,8 +983,58 @@ fn engine_main(
             raise_window(hwnd);
         }
     }
-    engine.shutdown();
+    engine.shutdown(Instant::now());
     publisher.publish(engine.snapshot());
+}
+
+/// Wakes the engine thread at the engine's next deadline, to the millisecond when Windows can (a
+/// high-resolution waitable timer, Windows 10 1803 and later): a plain timeout ends on Windows'
+/// clock tick, about every 16 ms, too coarse for 15 clicks per second.
+struct PreciseTimer {
+    handle: HANDLE,
+    high_resolution: bool,
+}
+
+impl PreciseTimer {
+    fn new() -> PreciseTimer {
+        let create = |flags| unsafe { CreateWaitableTimerExW(null(), null(), flags, TIMER_ALL_ACCESS) };
+        let precise = create(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION);
+        if !precise.is_null() {
+            return PreciseTimer { handle: precise, high_resolution: true };
+        }
+        PreciseTimer { handle: create(0), high_resolution: false }
+    }
+
+    /// Waits for a message (hotkey, request of the HUD...) or for `deadline`.
+    fn wait(&self, deadline: Option<Instant>) {
+        let Some(at) = deadline else {
+            unsafe { MsgWaitForMultipleObjectsEx(0, null(), INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+            return;
+        };
+        let left = at.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        // Relative due time, in units of 100 ns (negative), at least one unit.
+        let due = -i64::try_from(left.as_nanos() / 100).unwrap_or(i64::MAX).max(1);
+        if !self.handle.is_null() && unsafe { SetWaitableTimer(self.handle, &due, 0, None, null(), 0) } != 0 {
+            unsafe {
+                MsgWaitForMultipleObjectsEx(1, &self.handle, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            }
+            return;
+        }
+        // No timer: a timeout in milliseconds, rounded up (waking early would only mean waking again).
+        let timeout = u32::try_from(left.as_millis() + 1).unwrap_or(INFINITE - 1);
+        unsafe { MsgWaitForMultipleObjectsEx(0, null(), timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+    }
+}
+
+impl Drop for PreciseTimer {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
 }
 
 // --- HUD window ---------------------------------------------------------------------------------------
@@ -1304,7 +1397,9 @@ mod tests {
         assert_eq!(describe(0), "aucune");
         let scene = Scene::now(0);
         assert!(scene.reaches, "no press window: nothing to send");
-        let line = scene.deliver(MouseButton::Right);
+        let delivery = scene.deliver(MouseButton::Right);
+        assert_eq!(delivery, Delivery::Unknown);
+        let line = scene.line(MouseButton::Right, &delivery);
         assert!(line.starts_with("Relâchement du bouton droit : sous le curseur "), "{line}");
         assert!(line.ends_with("fenêtre de l'appui inconnue."), "{line}");
     }

@@ -21,6 +21,92 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · P2.1 : le moteur de « Multi-clic », la deuxième macro
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, avancée rapide sur `integration/passage-3`
+  (`43f796d`), puis le code, puis le commit de fin `[ETAPE-FINIE programmation-multiclic]`.
+  L'exécutable à essayer est l'artefact de la CI de ce dernier commit.
+- **Objectif** : P2.1, d'après D-18 à D-22, les ajouts du 2026-11-20 au contrat et R27 à R34.
+- **Réalisé** :
+  1. **La macro** : « Multi-clic », deuxième ligne du HUD, F9 par défaut, modifiable comme F8
+     (capture, refus, réglages). Chaque clic : appui puis relâchement du bouton choisi, là où est la
+     souris, injectés comme ceux du maintien (avec la signature de MacroHUD : la surveillance de la
+     souris ne les prend jamais pour de vrais clics).
+  2. **Cadence** (D-23, D-24) : les appuis tombent sur un battement fixe, au départ puis tous les
+     1/rapidité s ; un réveil en retard ne décale pas les suivants ; après un retard de plus d'un
+     intervalle, le battement repart de l'instant présent, sans rafale. Chaque appui dure la moitié de
+     l'intervalle, au plus 40 ms (33 ms à 15 clics/s). Sous Windows, le fil du moteur se réveille par
+     une minuterie haute résolution (à la milliseconde) et passe en priorité « au-dessus de la
+     normale ». Tests : à 10 clics/s pendant 10 s, exactement 100 clics, chacun à son heure, même
+     avec des réveils en retard de 0 à 15 ms (le pas de l'horloge ordinaire de Windows).
+  3. **Arrêts** : F9 ; un vrai clic du même bouton, consommé (la surveillance garde ce bouton comme
+     un bouton maintenu, même entre deux clics), les autres boutons passant normalement ; un clic sur
+     le HUD, qui arrête d'abord et n'agit pas sur le HUD, comme demandé (voir « À trancher ») ;
+     « Quitter » et Alt+F4 : arrêt avant la fermeture ; plantage : relâchement d'urgence, puis fin du
+     processus, donc plus aucun clic. Un appui en cours est relâché et son relâchement remis à la
+     fenêtre de l'appui (P1.8). `--essai-plantage` plante aussi à l'arrêt du multi-clic : le point
+     d'essai regarde désormais les boutons qu'une macro utilise, maintenus ou cliqués.
+  4. **Une macro à la fois** (D-20) : F8 pendant le multi-clic : le clic en cours finit, puis le
+     maintien appuie ; F9 pendant le maintien : le bouton est relâché, puis les clics commencent. Les
+     anciens tests qui faisaient tourner deux maintiens à la fois sont réécrits en conséquence.
+  5. **Aucun clic sur le HUD** (D-22) : souris sur le HUD, plus aucun appui, et le contrat dit la
+     macro « suspendue » ; les clics reprennent dès qu'elle en sort (MacroHUD regarde toutes les
+     50 ms). F9 avec la souris sur le HUD : refusé comme F8, sans rien changer à ce qui tourne.
+     « Activer » : décompte de 3 s, « Activation dans 3 s : place la souris là où il faut cliquer. ».
+  6. **`macrohud.log`** : démarrage (bouton, rapidité, voie : touche ou HUD), changement de rapidité,
+     suspension et reprise, arrêt (cause, nombre de clics envoyés, durée, et combien de relâchements
+     il a fallu remettre à la fenêtre de l'appui) ; au lancement, le genre de minuterie obtenu. Aucune
+     ligne par clic (il y en aurait jusqu'à 30 par seconde).
+  7. **Réglages** : `button` et `clicks_per_second` de `multi-clic` dans `reglages.json`. Un fichier
+     de la 0.1.10 se relit sans rien perdre et sans avertissement. Si F9 avait été donné au maintien,
+     « Multi-clic » garde F9 et reste indisponible, avec sa raison dans le HUD, jusqu'au choix d'une
+     autre touche ; le fichier n'est pas pour autant déclaré abîmé.
+  8. **HUD, le strict nécessaire** (`src/hud/mod.rs`, une ligne dans `src/hud/render.rs`) : la
+     deuxième ligne se dessine avec ce que le HUD sait déjà faire : choix du bouton (titre « Bouton
+     cliqué »), lignes d'état provisoires « Arrêtée · 10 clics/s », « Active · 10 clics/s », « En
+     pause · sur le HUD » (mesurées : elles tiennent dans la ligne). Pas de réglage de la rapidité.
+     Rendus des nouvelles situations regardés : corrects.
+  9. **La forme exacte du contrat, pour la session « visuel »** (`src/contract.rs`) :
+     - `MacroId::MULTI_CLICK` (`"multi-clic"`), deuxième macro de `HudState::macros` ;
+     - `MacroOptions::MultiClick { button: MouseButton, rate: ClickRate }` ;
+     - `ClickRate` : entier de clics par seconde, toujours entre `ClickRate::MIN` (1) et
+       `ClickRate::MAX` (15), `ClickRate::DEFAULT` (10) ; `ClickRate::new(n)` ramène `n` entre les
+       bornes ; `rate.per_second()` ; `rate.label()` donne « 10 clics/s », « 1 clic/s » ;
+     - `options.button()`, `options.with_button(b)`, `options.with_rate(r)` ;
+     - `MacroView::suspended` : vrai pour un « Multi-clic » actif dont les clics attendent que la
+       souris quitte le HUD ;
+     - action : `HudAction::SetOptions(id, view.options.with_rate(r))` ; une nouvelle rapidité compte
+       dès le clic suivant, un nouveau bouton pendant les clics arrête la macro ;
+     - `samples()` : six situations ajoutées (« deux macros », « multi-clic actif », « multi-clic
+       suspendu (souris sur le HUD) », « multi-clic aux bornes de la rapidité, bouton droit »,
+       « multi-clic indisponible », « replié, multi-clic actif ») ; les anciennes ne changent pas.
+- **Décisions** : D-23, D-24, D-25 (développeur).
+- **À trancher par la session maître** : la règle demandée « un clic sur le HUD arrête d'abord et
+  n'agit pas sur le HUD » (comme D-17) empêche de changer la rapidité depuis le HUD pendant que la
+  macro tourne (D-22, R28) : le premier clic sur le réglage arrête la macro. Pour le maintien, la
+  règle vient de la capture de la souris par l'application (le clic n'atteindrait pas le HUD). Pour
+  le multi-clic, rien de tel : souris sur le HUD, les clics sont suspendus et le bouton relâché, le
+  clic atteindrait le HUD. Deux voies : (a) pendant le multi-clic, les clics sur le HUD agissent
+  normalement (« Arrêter » arrête, la rapidité change en marche, « Quitter » ferme dès le premier
+  clic) ; (b) garder la règle, et changer la rapidité en marche autrement (molette, clavier). Le
+  moteur change déjà la rapidité en marche ; le choix ne touche que la surveillance de la souris. J'ai
+  appliqué la règle demandée en attendant.
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 127 tests OK sous Linux (103
+  avant), dont les nouveaux : cadence et battement (avec ou sans retards), pas de rafale après un
+  long retard, durée d'appui, rapidité changée en marche, arrêts par F9, vrai clic, clic sur le HUD,
+  nouveau bouton, fermeture, refus de Windows (appui ou relâchement), suspension et reprise, F9 sur le
+  HUD refusé, décompte, une macro à la fois dans les deux sens, réglages (fichier de la 0.1.10, F9 déjà
+  pris, rapidité hors bornes), bornes et libellés de la rapidité.
+- **Non vérifié sur le PC** : R27 à R34 ; la précision réelle de la minuterie (ligne « Minuterie du
+  moteur » de `macrohud.log`) ; un jeu (R34).
+- **Problèmes et dette** : la rapidité ne se règle dans le HUD qu'après P2.3 ; d'ici là,
+  `clicks_per_second` de `multi-clic` dans `reglages.json`, MacroHUD fermé.
+- **Prochaine étape** : la session « visuel » (aperçu P2.2, puis P2.3) ; passage 3 sur le PC (P2.4).
+
+---
+
 ## 2026-11-20 · Cadrage de « Multi-clic », la deuxième macro
 
 - **Session** : maître

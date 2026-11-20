@@ -309,6 +309,7 @@ fn coming(id: &'static str, name: &'static str, hotkey: &str) -> MacroView {
         hotkey: hotkey.into(),
         options: MacroOptions::HoldClick { button: MouseButton::Left },
         available: false,
+        suspended: false,
     }
 }
 

@@ -28,11 +28,12 @@ pub fn arm_crash_test() {
     CRASH_TEST.store(true, Ordering::SeqCst);
 }
 
-/// Crashes on purpose if the crash test is armed and a button is held (called where a macro stops).
-pub fn crash_test_point(held: ButtonSet) {
-    if CRASH_TEST.load(Ordering::SeqCst) && !held.is_empty() {
-        let buttons: Vec<&str> = held.iter().map(MouseButton::phrase).collect();
-        panic!("plantage d'essai (--essai-plantage), pendant que {} était maintenu", buttons.join(" et "));
+/// Crashes on purpose if the crash test is armed and a macro uses a button, held or clicked (called
+/// where a macro stops).
+pub fn crash_test_point(used: ButtonSet) {
+    if CRASH_TEST.load(Ordering::SeqCst) && !used.is_empty() {
+        let buttons: Vec<&str> = used.iter().map(MouseButton::phrase).collect();
+        panic!("plantage d'essai (--essai-plantage), pendant qu'une macro utilisait {}", buttons.join(" et "));
     }
 }
 

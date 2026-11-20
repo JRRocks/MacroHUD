@@ -306,6 +306,7 @@ fn initial_state(settings: &Settings) -> HudState {
                 hotkey: s.hotkey,
                 hotkey_label: s.hotkey.label(&|_| None),
                 options: s.options,
+                suspended: false,
             })
             .collect(),
         capturing: None,
@@ -331,6 +332,7 @@ pub fn hud_state(snapshot: &Snapshot, catalog: &[MacroDef], collapsed: bool, mes
                     hotkey: live.map_or_else(|| def.default_hotkey.label(&|_| None), |m| m.hotkey_label.clone()),
                     options: live.map_or(def.default_options, |m| m.options),
                     available: def.available,
+                    suspended: live.is_some_and(|m| m.suspended),
                 }
             })
             .collect(),
@@ -476,7 +478,7 @@ impl Messages {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::{MacroId, MacroOptions, MouseButton};
+    use crate::contract::{ClickRate, MacroId, MacroOptions, MouseButton};
     use crate::hotkey::{Modifier, Modifiers, vk};
 
     fn info(text: &str) -> Message {
@@ -610,13 +612,24 @@ mod tests {
     fn the_hud_state_follows_the_catalog_and_the_snapshot() {
         let ctrl_m = Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl).with(Modifier::Alt), vk::KEY_M);
         let snapshot = Snapshot {
-            macros: vec![MacroSnapshot {
-                id: MacroId::HOLD_CLICK,
-                status: MacroStatus::Active,
-                hotkey: ctrl_m,
-                hotkey_label: "Ctrl+Alt+M".into(),
-                options: MacroOptions::HoldClick { button: MouseButton::Right },
-            }],
+            macros: vec![
+                MacroSnapshot {
+                    id: MacroId::HOLD_CLICK,
+                    status: MacroStatus::Active,
+                    hotkey: ctrl_m,
+                    hotkey_label: "Ctrl+Alt+M".into(),
+                    options: MacroOptions::HoldClick { button: MouseButton::Right },
+                    suspended: false,
+                },
+                MacroSnapshot {
+                    id: MacroId::MULTI_CLICK,
+                    status: MacroStatus::Active,
+                    hotkey: Hotkey::F9,
+                    hotkey_label: "F9".into(),
+                    options: MacroOptions::MultiClick { button: MouseButton::Middle, rate: ClickRate::MAX },
+                    suspended: true,
+                },
+            ],
             capturing: Some(MacroId::HOLD_CLICK),
             notice: None,
         };
@@ -633,6 +646,11 @@ mod tests {
         assert_eq!(view.hotkey, "Ctrl+Alt+M");
         assert_eq!(view.options, MacroOptions::HoldClick { button: MouseButton::Right });
         assert!(view.available);
+        assert!(!view.suspended);
+        let multi = &state.macros[1];
+        assert_eq!(multi.name, "Multi-clic");
+        assert_eq!((multi.status.clone(), multi.suspended), (MacroStatus::Active, true));
+        assert_eq!(multi.options, MacroOptions::MultiClick { button: MouseButton::Middle, rate: ClickRate::MAX });
     }
 
     #[test]
@@ -647,5 +665,8 @@ mod tests {
         assert_eq!(state.macros[0].options, MacroOptions::HoldClick { button: MouseButton::Middle });
         let setup = macro_setup(&settings, CATALOG);
         assert_eq!(setup[0].hotkey, Hotkey::F8);
+        // The second macro, « Multi-clic », with its defaults.
+        assert_eq!(state.macros[1].hotkey, "F9");
+        assert_eq!(setup[1].options, MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT });
     }
 }

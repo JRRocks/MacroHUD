@@ -96,7 +96,7 @@ struct StandIn {
 }
 
 impl Backend for StandIn {
-    fn watch(&mut self, _held: ButtonSet) -> Result<(), String> {
+    fn watch(&mut self, _guarded: ButtonSet) -> Result<(), String> {
         Ok(())
     }
     fn is_down(&self, button: MouseButton) -> bool {
@@ -114,6 +114,15 @@ impl Backend for StandIn {
         HELD.fetch_and(!ButtonSet::only(button).bits(), Ordering::SeqCst);
         crate::log::write(format!("(simulé) {} relâché", button.phrase()));
         Ok(())
+    }
+    // The clicks of « Multi-clic »: no line for each, as on Windows.
+    fn click_down(&mut self, button: MouseButton) -> Result<(), String> {
+        HELD.fetch_or(ButtonSet::only(button).bits(), Ordering::SeqCst);
+        Ok(())
+    }
+    fn click_up(&mut self, button: MouseButton) -> Result<bool, String> {
+        HELD.fetch_and(!ButtonSet::only(button).bits(), Ordering::SeqCst);
+        Ok(false)
     }
     fn pointer_on_hud(&self) -> bool {
         false
@@ -168,7 +177,7 @@ fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: P
         match inputs.recv_timeout(wait) {
             Ok(Input::Command(command)) => {
                 if matches!(command, Command::Stop(_)) {
-                    crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
+                    crate::crash::crash_test_point(engine.guarded_buttons());
                 }
                 engine.command(command, Instant::now());
             }
@@ -179,6 +188,6 @@ fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: P
         engine.tick(Instant::now());
         publisher.publish(engine.snapshot());
     }
-    engine.shutdown();
+    engine.shutdown(Instant::now());
     publisher.publish(engine.snapshot());
 }
