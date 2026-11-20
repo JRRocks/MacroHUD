@@ -11,6 +11,10 @@
 //!
 //! Every button MacroHUD presses is recorded in [`HELD`] before it is pressed, so that
 //! [`emergency_release`] (panic hook, crash filter, exit) can release it from any thread.
+//!
+//! The capture of a new hotkey listens in two ways: the low-level keyboard hook (keys typed in any
+//! window), and a keyboard hook on the HUD's own thread (keys typed while the HUD has the focus: the
+//! PC test showed the low-level hook did not get those). The first answer wins.
 
 #![allow(unsafe_code)]
 
@@ -19,7 +23,7 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -52,16 +56,16 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE, MessageBoxW,
     MsgWaitForMultipleObjectsEx, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT,
     SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowPos,
-    SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_APP, WM_HOTKEY, WM_QUIT,
-    WM_TIMER,
+    SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_APP,
+    WM_HOTKEY, WM_QUIT, WM_TIMER,
 };
 
 use super::BoxKind;
-use crate::capture::KeyCapture;
+use crate::capture::{KeyCapture, Outcome};
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
-use crate::engine::{Backend, Command, Engine, Event, HotkeyId, MacroSetup, RegisterError, Snapshot};
-use crate::guard::{self, ButtonSet, MouseGuard};
+use crate::engine::{Backend, Command, Engine, Event, HotkeyId, KeySource, MacroSetup, RegisterError, Snapshot};
+use crate::guard::{self, ButtonSet, Edge, MouseGuard, Source};
 use crate::hotkey::{Hotkey, Modifiers, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
 
@@ -79,6 +83,10 @@ const HOOK_ANSWER_WAIT: Duration = Duration::from_secs(2);
 static HELD: AtomicU8 = AtomicU8::new(0);
 /// Set by the panic hook: the hooks then let everything through untouched.
 static PANICKING: AtomicBool = AtomicBool::new(false);
+/// Keyboard events seen during the current capture, by the low-level hook and by the HUD's thread
+/// (written in the run log at the end of a capture, to understand it afterwards).
+static GLOBAL_KEYS_SEEN: AtomicU32 = AtomicU32::new(0);
+static WINDOW_KEYS_SEEN: AtomicU32 = AtomicU32::new(0);
 
 fn wide(text: &str) -> Vec<u16> {
     OsStr::new(text).encode_wide().chain(std::iter::once(0)).collect()
@@ -290,6 +298,8 @@ struct HookState {
     keyboard_hook: HHOOK,
     engine: EngineWaker,
     thread_id: u32,
+    /// The HUD's window: a click on it during a hold stops the hold.
+    hud: Option<isize>,
     /// The hooks must be installed or removed: done by the thread's loop, not inside a hook procedure.
     resync_posted: bool,
 }
@@ -367,13 +377,18 @@ unsafe extern "system" fn mouse_procedure(code: i32, wparam: WPARAM, lparam: LPA
     if code == HC_ACTION as i32 && !PANICKING.load(Ordering::Relaxed) {
         // SAFETY: for HC_ACTION, `lparam` points to an MSLLHOOKSTRUCT (WH_MOUSE_LL contract).
         let info = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
-        if !guard::is_injected(info.flags)
-            && let Some((button, edge)) = guard::button_event(wparam as u32)
-        {
+        let injected = guard::is_injected(info.flags);
+        // MacroHUD's own presses and releases are none of the guard's business.
+        let ours = injected && info.dwExtraInfo == SIGNATURE;
+        if !ours && let Some((button, edge)) = guard::button_event(wparam as u32) {
+            let source = if injected { Source::OtherProgram } else { Source::Hand };
             let swallow = with_hooks(|state| {
-                let verdict = state.guard.on_physical(button, edge, Instant::now());
-                if let Some(clicked) = verdict.stop {
-                    state.engine.send(Event::PhysicalClick(clicked));
+                let on_hud = edge == Edge::Down
+                    && !state.guard.held().is_empty()
+                    && state.hud.is_some_and(|hud| point_in_window(hud, info.pt));
+                let verdict = state.guard.on_event(button, edge, source, on_hud, Instant::now());
+                if !verdict.stop.is_empty() {
+                    state.engine.send(Event::Click { buttons: verdict.stop, on_hud: verdict.on_hud });
                 }
                 if !state.guard.needs_hook() {
                     state.post_resync();
@@ -396,10 +411,11 @@ unsafe extern "system" fn keyboard_procedure(code: i32, wparam: WPARAM, lparam: 
         let key = Vk::try_from(info.vkCode).unwrap_or(0);
         let swallow = with_hooks(|state| {
             let capture = state.capture.as_mut()?;
+            GLOBAL_KEYS_SEEN.fetch_add(1, Ordering::Relaxed);
             let decision = capture.on_key(key, down);
             let finished = !capture.needs_events();
             if let Some(outcome) = decision.outcome {
-                state.engine.send(Event::Captured(outcome));
+                state.engine.send(Event::Captured { outcome, source: KeySource::GlobalHook });
             }
             if finished {
                 state.post_resync();
@@ -422,12 +438,12 @@ struct HookThread {
 }
 
 impl HookThread {
-    fn spawn(engine: EngineWaker) -> Result<HookThread, String> {
+    fn spawn(engine: EngineWaker, hud: Option<isize>) -> Result<HookThread, String> {
         let (requests, receiver) = mpsc::channel();
         let (ready_sender, ready) = mpsc::sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("macrohud-crochets".into())
-            .spawn(move || hook_main(receiver, ready_sender, engine))
+            .spawn(move || hook_main(receiver, ready_sender, engine, hud))
             .map_err(|e| format!("fil des crochets : {e}"))?;
         let thread_id =
             ready.recv_timeout(HOOK_ANSWER_WAIT).map_err(|_| "le fil des crochets n'a pas démarré".to_string())?;
@@ -458,7 +474,7 @@ impl Drop for HookThread {
     }
 }
 
-fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: EngineWaker) {
+fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: EngineWaker, hud: Option<isize>) {
     unsafe {
         // The hooks must answer at once, even when a game keeps every core busy.
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
@@ -473,6 +489,7 @@ fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: En
             keyboard_hook: null_mut(),
             engine,
             thread_id,
+            hud,
             resync_posted: false,
         })
     });
@@ -610,6 +627,7 @@ impl Backend for WindowsBackend {
     }
 
     fn start_capture(&mut self) -> Result<(), String> {
+        GLOBAL_KEYS_SEEN.store(0, Ordering::Relaxed);
         let modifiers = held_modifiers();
         match &self.hooks {
             Some(hooks) => hooks.ask(|answer| HookRequest::StartCapture(modifiers, answer)),
@@ -621,6 +639,11 @@ impl Backend for WindowsBackend {
         if let Some(hooks) = &self.hooks {
             hooks.tell(HookRequest::StopCapture);
         }
+        crate::log::write(format!(
+            "Capture terminée : événements clavier vus par le crochet global : {}, par la fenêtre du HUD : {}.",
+            GLOBAL_KEYS_SEEN.load(Ordering::Relaxed),
+            WINDOW_KEYS_SEEN.load(Ordering::Relaxed)
+        ));
     }
 
     fn altgr_char(&self, hotkey: Hotkey) -> Option<char> {
@@ -632,15 +655,18 @@ impl Backend for WindowsBackend {
     }
 }
 
+/// Whether the mouse pointer is over the window.
 fn pointer_in_window(hwnd: isize) -> bool {
-    let hwnd = hwnd as HWND;
     let mut point = POINT::default();
+    (unsafe { GetCursorPos(&mut point) } != 0) && point_in_window(hwnd, point)
+}
+
+/// Whether a point of the screen is over the window (visible, not minimised).
+fn point_in_window(hwnd: isize, point: POINT) -> bool {
+    let hwnd = hwnd as HWND;
     let mut rect = RECT::default();
     unsafe {
-        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
-            return false;
-        }
-        if GetCursorPos(&mut point) == 0 || GetWindowRect(hwnd, &mut rect) == 0 {
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 || GetWindowRect(hwnd, &mut rect) == 0 {
             return false;
         }
     }
@@ -664,7 +690,7 @@ pub fn spawn_engine(
         .map_err(|e| format!("fil du moteur : {e}"))?;
     let thread_id =
         ready.recv_timeout(Duration::from_secs(5)).map_err(|_| "le fil du moteur n'a pas démarré".to_string())?;
-    let wake = Box::new(move || post(thread_id, WM_WAKE));
+    let wake = Arc::new(move || post(thread_id, WM_WAKE));
     Ok(EngineHandle::new(sender, wake, shared, thread))
 }
 
@@ -679,7 +705,7 @@ fn engine_main(
     ensure_message_queue();
     let thread_id = unsafe { GetCurrentThreadId() };
     let _ = ready.send(thread_id);
-    let hooks = match HookThread::spawn(EngineWaker { thread_id, sender }) {
+    let hooks = match HookThread::spawn(EngineWaker { thread_id, sender }, hud) {
         Ok(hooks) => Some(hooks),
         Err(e) => {
             crate::log::write(format!("Surveillance de la souris impossible : {e}"));
@@ -694,7 +720,8 @@ fn engine_main(
     'run: loop {
         let timeout = match engine.next_deadline() {
             Some(at) => {
-                let wait = at.saturating_duration_since(Instant::now()).as_millis();
+                // Rounded up: waking a little early would only mean waking again at once.
+                let wait = at.saturating_duration_since(Instant::now()).as_millis() + 1;
                 u32::try_from(wait).unwrap_or(INFINITE - 1)
             }
             None => INFINITE,
@@ -725,7 +752,7 @@ fn engine_main(
                     engine.command(command, Instant::now());
                 }
                 Ok(Input::Event(event)) => {
-                    raise |= matches!(event, Event::PhysicalClick(_));
+                    raise |= matches!(event, Event::Click { .. });
                     engine.event(event, Instant::now());
                 }
                 Ok(Input::Shutdown) | Err(TryRecvError::Disconnected) => break 'run,
@@ -791,6 +818,46 @@ impl HudWindow {
         move_window(hwnd, x, y);
     }
 
+    /// Starts listening to the keys sent to the HUD's own thread (the thread calling this, which owns
+    /// the window): while the HUD has the focus, a new hotkey is captured there. `report` gets the
+    /// outcome. Stopped by [`HudWindow::stop_key_capture`].
+    pub fn start_key_capture(&self, report: Box<dyn Fn(Outcome)>) {
+        remove_window_capture(true);
+        let thread = unsafe { GetCurrentThreadId() };
+        // A hook on a thread of this process needs no module handle.
+        let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(window_keyboard_procedure), null_mut(), thread) };
+        if hook.is_null() {
+            crate::log::write(format!("Capture par la fenêtre du HUD impossible : erreur {}.", last_error()));
+            return;
+        }
+        WINDOW_KEYS_SEEN.store(0, Ordering::Relaxed);
+        let capture = WindowCapture { capture: KeyCapture::new(held_modifiers()), hook, report };
+        WINDOW_CAPTURE.with(|cell| match cell.try_borrow_mut() {
+            Ok(mut slot) => *slot = Some(capture),
+            Err(_) => {
+                let mut capture = capture;
+                remove_hook(&mut capture.hook);
+            }
+        });
+    }
+
+    /// Stops waiting for a key (releases of keys already swallowed are still swallowed).
+    pub fn stop_key_capture(&self) {
+        WINDOW_CAPTURE.with(|cell| {
+            if let Ok(mut slot) = cell.try_borrow_mut()
+                && let Some(window) = slot.as_mut()
+            {
+                window.capture.finish();
+            }
+        });
+        remove_window_capture(false);
+    }
+
+    /// Removes the HUD's keyboard hook once it has nothing left to do (called at every frame).
+    pub fn key_capture_tick(&self) {
+        remove_window_capture(false);
+    }
+
     /// Moves the window back inside the screen if part of it went out (after a resize, for instance).
     pub fn keep_on_screen(&self) {
         let (Some(hwnd), Some(rect)) = (self.hwnd, self.rect()) else { return };
@@ -809,6 +876,50 @@ fn raise_window(hwnd: isize) {
     unsafe {
         SetWindowPos(hwnd as HWND, HWND_TOPMOST, 0, 0, 0, 0, flags);
     }
+}
+
+/// A capture listening to the keyboard messages of the HUD's own thread.
+struct WindowCapture {
+    capture: KeyCapture,
+    hook: HHOOK,
+    report: Box<dyn Fn(Outcome)>,
+}
+
+thread_local! {
+    static WINDOW_CAPTURE: RefCell<Option<WindowCapture>> = const { RefCell::new(None) };
+}
+
+/// Removes the HUD thread's keyboard hook: always (`force`), or once it no longer needs events.
+fn remove_window_capture(force: bool) {
+    WINDOW_CAPTURE.with(|cell| {
+        let Ok(mut slot) = cell.try_borrow_mut() else { return };
+        let now = Instant::now();
+        let done = slot.as_ref().is_some_and(|w| force || !w.capture.needs_events() || w.capture.expired(now));
+        if done && let Some(mut window) = slot.take() {
+            remove_hook(&mut window.hook);
+        }
+    });
+}
+
+unsafe extern "system" fn window_keyboard_procedure(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // HC_ACTION only: a message only peeked at (HC_NOREMOVE) comes back later as HC_ACTION.
+    if code == HC_ACTION as i32 && !PANICKING.load(Ordering::Relaxed) {
+        let (key, down) = crate::capture::key_message(wparam, lparam);
+        let swallow = WINDOW_CAPTURE.with(|cell| {
+            let mut slot = cell.try_borrow_mut().ok()?;
+            let window = slot.as_mut()?;
+            WINDOW_KEYS_SEEN.fetch_add(1, Ordering::Relaxed);
+            let decision = window.capture.on_key(key, down);
+            if let Some(outcome) = decision.outcome {
+                (window.report)(outcome);
+            }
+            Some(decision.swallow)
+        });
+        if swallow == Some(true) {
+            return 1;
+        }
+    }
+    unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
 fn move_window(hwnd: isize, x: i32, y: i32) {
@@ -978,12 +1089,22 @@ mod tests {
     fn the_hook_thread_installs_and_removes_the_hooks() {
         let (sender, _events) = mpsc::channel();
         let waker = EngineWaker { thread_id: unsafe { GetCurrentThreadId() }, sender };
-        let hooks = HookThread::spawn(waker).expect("hook thread");
+        let hooks = HookThread::spawn(waker, None).expect("hook thread");
         hooks.ask(|a| HookRequest::Watch(ButtonSet::only(MouseButton::Middle), a)).expect("mouse hook");
         hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, a)).expect("no mouse hook");
         hooks.ask(|a| HookRequest::StartCapture(Modifiers::NONE, a)).expect("keyboard hook");
         hooks.tell(HookRequest::StopCapture);
         drop(hooks);
+    }
+
+    /// The HUD thread's keyboard hook installs and goes away (on the test's own thread).
+    #[test]
+    fn the_hud_thread_keyboard_hook_installs_and_goes_away() {
+        let window = HudWindow::default();
+        window.start_key_capture(Box::new(|_| {}));
+        assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().is_some()), "hook installed");
+        window.stop_key_capture();
+        assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().is_none()), "hook removed");
     }
 
     #[test]

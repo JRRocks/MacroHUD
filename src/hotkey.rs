@@ -342,26 +342,25 @@ fn reserved_use(hotkey: &Hotkey) -> Option<&'static str> {
 pub fn refusal(hotkey: &Hotkey, label: &str) -> Option<String> {
     let key = hotkey.key;
     if key == 0 || key > 0xFE || modifier_of(key).is_some() || (vk::LBUTTON..=vk::XBUTTON2).contains(&key) {
-        return Some("Choisissez une touche, en plus de Ctrl, Alt, Maj ou Win.".into());
+        return Some("Choisis une touche, en plus de Ctrl, Alt, Maj ou Win.".into());
     }
     if key == vk::ESCAPE {
-        return Some("Échap sert à annuler : choisissez une autre touche.".into());
+        return Some("Échap sert à annuler : choisis une autre touche.".into());
     }
     if key == vk::PACKET || key == vk::PROCESSKEY {
         return Some("Cette touche ne peut pas servir de raccourci.".into());
     }
     if key == vk::F12 && hotkey.modifiers == Modifiers::NONE {
         return Some(
-            "F12 seule est réservée par Windows : ajoutez Ctrl, Alt, Maj ou Win, ou choisissez une autre touche."
-                .into(),
+            "F12 seule est réservée par Windows : ajoute Ctrl, Alt, Maj ou Win, ou choisis une autre touche.".into(),
         );
     }
     if let Some(usage) = reserved_use(hotkey) {
-        return Some(format!("{label} sert déjà à {usage} partout : choisissez-en un autre."));
+        return Some(format!("{label} sert déjà à {usage} partout : choisis-en un autre."));
     }
     if types_text(key) && !hotkey.modifiers.has_command() {
         return Some(format!(
-            "{label} empêcherait d'écrire : ajoutez Ctrl, Alt ou Win, ou choisissez une touche de F1 à F24."
+            "{label} empêcherait d'écrire : ajoute Ctrl, Alt ou Win, ou choisis une touche de F1 à F24."
         ));
     }
     None
@@ -495,6 +494,6 @@ mod tests {
         assert!(refused(hk(Modifiers::NONE, 0)));
         assert!(refused(hk(Modifiers::NONE, vk::LBUTTON)));
         let text = refusal(&hk(alt, vk::F4), "Alt+F4").unwrap();
-        assert_eq!(text, "Alt+F4 sert déjà à fermer les fenêtres partout : choisissez-en un autre.");
+        assert_eq!(text, "Alt+F4 sert déjà à fermer les fenêtres partout : choisis-en un autre.");
     }
 }

@@ -106,7 +106,7 @@ fn report_text(stamp: &Stamp, version: &str, details: &Details<'_>, backtrace: &
          Endroit dans le code : {location}\n\
          \n\
          Ce qui a été fait : {released} MacroHUD s'est ensuite fermé.\n\
-         Pour aider à corriger ce plantage, transmettez ce fichier.\n\
+         Pour aider à corriger ce plantage, transmets ce fichier.\n\
          \n\
          Pile d'appels (technique)\n\
          -------------------------\n\

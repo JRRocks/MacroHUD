@@ -80,6 +80,13 @@ impl HudWindow {
     pub fn place(&self, _saved: Option<(i32, i32)>) {}
 
     pub fn keep_on_screen(&self) {}
+
+    /// No keyboard of the HUD's own to listen to here.
+    pub fn start_key_capture(&self, _report: Box<dyn Fn(crate::capture::Outcome)>) {}
+
+    pub fn stop_key_capture(&self) {}
+
+    pub fn key_capture_tick(&self) {}
 }
 
 /// A backend that pretends: presses go to the log, hotkeys always register (unless used twice).
@@ -148,7 +155,7 @@ pub fn spawn_engine(
         .name("macrohud-moteur".into())
         .spawn(move || engine_main(setup, receiver, publisher))
         .map_err(|e| format!("fil du moteur : {e}"))?;
-    Ok(EngineHandle::new(sender, Box::new(|| {}), shared, thread))
+    Ok(EngineHandle::new(sender, Arc::new(|| {}), shared, thread))
 }
 
 fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: Publisher) {

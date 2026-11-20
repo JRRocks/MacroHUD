@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::contract::{HudAction, HudState, MacroStatus, MacroView, Message, MessageLevel};
-use crate::engine::{Command, MacroSetup, MacroSnapshot, Snapshot};
+use crate::engine::{Command, Event, KeySource, MacroSetup, MacroSnapshot, Notice, Snapshot};
 use crate::hotkey::Hotkey;
 use crate::hud;
 use crate::macros::{CATALOG, MacroDef};
@@ -23,6 +23,8 @@ use crate::settings::{self, Settings};
 
 /// A moved window's position is saved once it has stayed still this long.
 const POSITION_SAVE_DELAY: Duration = Duration::from_secs(1);
+/// How long the HUD's own key capture waits for the engine to confirm the capture it asked for.
+const CAPTURE_CONFIRM_WAIT: Duration = Duration::from_secs(2);
 
 /// What `main` hands over.
 pub struct Startup {
@@ -77,6 +79,9 @@ struct HudApp {
     check_on_screen: bool,
     save_failed: bool,
     shut_down: bool,
+    /// The HUD's own key capture runs (started with the engine's): since when, and whether the
+    /// engine has shown its capture since (then its end ends this one too).
+    window_capture: Option<(Instant, bool)>,
 }
 
 impl HudApp {
@@ -108,6 +113,7 @@ impl HudApp {
             check_on_screen: false,
             save_failed: false,
             shut_down: false,
+            window_capture: None,
         })
     }
 
@@ -119,8 +125,19 @@ impl HudApp {
         match action {
             HudAction::Start(id) => self.engine.send(Command::Start(id)),
             HudAction::Stop(id) => self.engine.send(Command::Stop(id)),
-            HudAction::StartCapture(id) => self.engine.send(Command::StartCapture(id)),
-            HudAction::CancelCapture => self.engine.send(Command::CancelCapture),
+            HudAction::StartCapture(id) => {
+                self.engine.send(Command::StartCapture(id));
+                // While the HUD has the focus, the keys go to its own thread: listen there too.
+                let report = self.engine.reporter();
+                self.window.start_key_capture(Box::new(move |outcome| {
+                    report(Event::Captured { outcome, source: KeySource::HudWindow })
+                }));
+                self.window_capture = Some((Instant::now(), false));
+            }
+            HudAction::CancelCapture => {
+                self.engine.send(Command::CancelCapture);
+                self.stop_window_capture();
+            }
             HudAction::SetOptions(id, options) => self.engine.send(Command::SetOptions(id, options)),
             HudAction::SetCollapsed(collapsed) => self.collapsed = collapsed,
             HudAction::StartDrag => ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag),
@@ -161,12 +178,30 @@ impl HudApp {
                 if !self.save_failed {
                     self.save_failed = true;
                     let text = format!("Impossible d'enregistrer les réglages ({e}).");
-                    self.messages.push_now(Message::new(MessageLevel::Warning, text), Instant::now());
+                    self.messages.push_now(Message::new(MessageLevel::Warning, text), Instant::now(), false);
                 }
             }
         }
         // Even after a failure: no new attempt at every frame, only at the next change.
         self.saved = current;
+    }
+
+    fn stop_window_capture(&mut self) {
+        self.window.stop_key_capture();
+        self.window_capture = None;
+    }
+
+    /// The HUD's own key capture follows the engine's: once the engine's capture is over (a key
+    /// came by any way, Échap, too long, refused at start), this one stops too.
+    fn follow_capture(&mut self, now: Instant) {
+        if let Some((since, seen)) = &mut self.window_capture {
+            if self.snapshot.capturing.is_some() {
+                *seen = true;
+            } else if *seen || now.saturating_duration_since(*since) >= CAPTURE_CONFIRM_WAIT {
+                self.stop_window_capture();
+            }
+        }
+        self.window.key_capture_tick();
     }
 
     /// Releases everything and saves, once: before the window closes, whatever closes it.
@@ -175,6 +210,7 @@ impl HudApp {
             return;
         }
         self.shut_down = true;
+        self.stop_window_capture();
         self.engine.shutdown();
         let released = platform::emergency_release();
         if !released.is_empty() {
@@ -202,7 +238,8 @@ impl eframe::App for HudApp {
             self.check_on_screen = false;
         }
         self.snapshot = self.engine.snapshot();
-        self.messages.sync_engine(self.snapshot.message.as_ref(), now);
+        self.follow_capture(now);
+        self.messages.sync_engine(self.snapshot.notice.as_ref(), now);
         self.messages.expire(now);
         if let Some(position) = self.window.position() {
             self.position.observe(position, now);
@@ -211,7 +248,8 @@ impl eframe::App for HudApp {
         if !self.shut_down {
             self.save_if_changed();
         }
-        let waits = [self.messages.next_change(now), self.position.next_check(now)];
+        let capture_check = self.window_capture.filter(|(_, seen)| !seen).map(|_| Duration::from_millis(250));
+        let waits = [self.messages.next_change(now), self.position.next_check(now), capture_check];
         if let Some(wait) = waits.into_iter().flatten().min() {
             ctx.request_repaint_after(wait);
         }
@@ -271,7 +309,7 @@ fn initial_state(settings: &Settings) -> HudState {
             })
             .collect(),
         capturing: None,
-        message: None,
+        notice: None,
     };
     hud_state(&snapshot, CATALOG, settings.collapsed, None)
 }
@@ -359,58 +397,79 @@ impl PositionTracker {
 /// The one-off messages: one shown at a time, each for `hud::MESSAGE_DURATION`.
 #[derive(Debug, Default)]
 struct Messages {
-    current: Option<(Message, Instant)>,
+    current: Option<Shown>,
     waiting: VecDeque<Message>,
     last_engine_number: u64,
+}
+
+/// The message on screen.
+#[derive(Debug)]
+struct Shown {
+    message: Message,
+    since: Instant,
+    /// It came from the engine (which may take it back), not from the start of MacroHUD.
+    from_engine: bool,
 }
 
 impl Messages {
     /// Shows `message` now. The message it replaces comes back afterwards if it was an early
     /// warning (from the start) that had no time to be read.
-    fn push_now(&mut self, message: Message, now: Instant) {
-        if let Some((replaced, since)) = self.current.take()
-            && replaced.level != MessageLevel::Info
-            && now.saturating_duration_since(since) < hud::MESSAGE_DURATION / 2
+    fn push_now(&mut self, message: Message, now: Instant, from_engine: bool) {
+        if let Some(replaced) = self.current.take()
+            && !replaced.from_engine
+            && replaced.message.level != MessageLevel::Info
+            && now.saturating_duration_since(replaced.since) < hud::MESSAGE_DURATION / 2
         {
-            self.waiting.push_front(replaced);
+            self.waiting.push_front(replaced.message);
         }
-        self.current = Some((message, now));
+        self.current = Some(Shown { message, since: now, from_engine });
     }
 
-    /// Shows `message` after those already waiting.
+    /// Shows `message` (from the start of MacroHUD) after those already waiting.
     fn push_later(&mut self, message: Message, now: Instant) {
         if self.current.is_none() {
-            self.current = Some((message, now));
+            self.current = Some(Shown { message, since: now, from_engine: false });
         } else {
             self.waiting.push_back(message);
         }
     }
 
-    /// Takes the engine's latest message, if it is new.
-    fn sync_engine(&mut self, latest: Option<&(u64, Message)>, now: Instant) {
-        if let Some((number, message)) = latest
-            && *number > self.last_engine_number
-        {
-            self.last_engine_number = *number;
-            self.push_now(message.clone(), now);
+    /// Takes the engine's latest notice, if it is new: a message to show, or the end of its message.
+    fn sync_engine(&mut self, notice: Option<&Notice>, now: Instant) {
+        let Some(notice) = notice else { return };
+        if notice.number <= self.last_engine_number {
+            return;
+        }
+        self.last_engine_number = notice.number;
+        match &notice.message {
+            Some(message) => self.push_now(message.clone(), now, true),
+            None => {
+                if self.current.as_ref().is_some_and(|c| c.from_engine) {
+                    self.show_next(now);
+                }
+            }
         }
     }
 
+    fn show_next(&mut self, now: Instant) {
+        self.current = self.waiting.pop_front().map(|message| Shown { message, since: now, from_engine: false });
+    }
+
     fn expire(&mut self, now: Instant) {
-        while let Some((_, since)) = &self.current
-            && now.saturating_duration_since(*since) >= hud::MESSAGE_DURATION
+        while let Some(shown) = &self.current
+            && now.saturating_duration_since(shown.since) >= hud::MESSAGE_DURATION
         {
-            self.current = self.waiting.pop_front().map(|m| (m, now));
+            self.show_next(now);
         }
     }
 
     fn current(&self) -> Option<&Message> {
-        self.current.as_ref().map(|(m, _)| m)
+        self.current.as_ref().map(|c| &c.message)
     }
 
     /// When the shown message must go.
     fn next_change(&self, now: Instant) -> Option<Duration> {
-        self.current.as_ref().map(|(_, since)| (*since + hud::MESSAGE_DURATION).saturating_duration_since(now))
+        self.current.as_ref().map(|c| (c.since + hud::MESSAGE_DURATION).saturating_duration_since(now))
     }
 }
 
@@ -426,6 +485,10 @@ mod tests {
 
     fn warning(text: &str) -> Message {
         Message::new(MessageLevel::Warning, text)
+    }
+
+    fn notice(number: u64, message: Message) -> Notice {
+        Notice { number, message: Some(message) }
     }
 
     /// Runs a few frames of the HUD without a window, at its own window size; returns its actions.
@@ -508,16 +571,39 @@ mod tests {
         let start = Instant::now();
         let mut m = Messages::default();
         m.push_later(warning("au démarrage"), start);
-        m.sync_engine(Some(&(1, info("raccourci enregistré"))), start);
+        m.sync_engine(Some(&notice(1, info("raccourci enregistré"))), start);
         assert_eq!(m.current(), Some(&info("raccourci enregistré")));
         // The early warning was cut short: it comes back next.
         m.expire(start + hud::MESSAGE_DURATION);
         assert_eq!(m.current(), Some(&warning("au démarrage")));
         // The same engine message again (same number) is not shown again.
-        m.sync_engine(Some(&(1, info("raccourci enregistré"))), start + hud::MESSAGE_DURATION);
+        m.sync_engine(Some(&notice(1, info("raccourci enregistré"))), start + hud::MESSAGE_DURATION);
         assert_eq!(m.current(), Some(&warning("au démarrage")));
-        m.sync_engine(Some(&(2, info("autre"))), start + hud::MESSAGE_DURATION);
+        m.sync_engine(Some(&notice(2, info("autre"))), start + hud::MESSAGE_DURATION);
         assert_eq!(m.current(), Some(&info("autre")));
+    }
+
+    #[test]
+    fn the_engine_can_take_its_message_back() {
+        let start = Instant::now();
+        let mut m = Messages::default();
+        m.sync_engine(Some(&notice(1, info("Activation dans 3 s"))), start);
+        m.sync_engine(Some(&Notice { number: 2, message: None }), start);
+        assert_eq!(m.current(), None, "the countdown is gone at the press");
+        // A withdrawal never takes away a message that is not the engine's.
+        m.push_later(warning("au démarrage"), start);
+        m.sync_engine(Some(&Notice { number: 3, message: None }), start);
+        assert_eq!(m.current(), Some(&warning("au démarrage")));
+        // A withdrawal lets the next waiting message show.
+        let mut m = Messages::default();
+        m.push_later(warning("premier"), start);
+        m.push_later(warning("second"), start);
+        let soon = start + Duration::from_secs(1);
+        m.sync_engine(Some(&notice(1, info("Activation dans 3 s"))), soon);
+        m.sync_engine(Some(&Notice { number: 2, message: None }), soon);
+        assert_eq!(m.current(), Some(&warning("premier")), "cut short, so shown again");
+        m.expire(soon + hud::MESSAGE_DURATION);
+        assert_eq!(m.current(), Some(&warning("second")));
     }
 
     #[test]
@@ -532,7 +618,7 @@ mod tests {
                 options: MacroOptions::HoldClick { button: MouseButton::Right },
             }],
             capturing: Some(MacroId::HOLD_CLICK),
-            message: None,
+            notice: None,
         };
         let state = hud_state(&snapshot, CATALOG, true, Some(&info("bonjour")));
         assert_eq!(state.app_name, "MacroHUD");

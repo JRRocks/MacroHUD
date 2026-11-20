@@ -31,7 +31,7 @@ pub fn end() {
 
 /// The warning shown at start after an abrupt end.
 pub const ABRUPT_END_WARNING: &str = "MacroHUD ne s'était pas fermé normalement la dernière fois. \
-     Si un bouton de la souris semble bloqué, cliquez-le une fois.";
+     Si un bouton de la souris semble bloqué, clique-le une fois.";
 
 #[cfg(test)]
 mod tests {

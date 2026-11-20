@@ -32,9 +32,9 @@ macro : maintenir un bouton de la souris enfoncé (D-04).
 | R5 | — | Dans le HUD : « Changer », puis Ctrl+Alt+M ; quitter et relancer | Message « Nouveau raccourci… : Ctrl+Alt+M » ; Ctrl+Alt+M bascule la macro, F8 ne fait plus rien, et ça tient après la relance | à essayer |
 | R6 | — | « Changer », puis Win+E (pris par Windows) ; « Changer », puis Échap | Refus expliqué en français, l'ancien raccourci marche encore ; Échap : « Raccourci inchangé » | à essayer |
 | R7 | — | Clavier AZERTY : « Changer », puis AltGr+E | Refus : Ctrl+Alt+E sert à écrire « € » | à essayer |
-| R8 | — | « Activer » dans le HUD, puis mettre la souris sur la toile de Paint avant 3 s | Message « … dans 3 secondes » ; après 3 s le trait se dessine là où est la souris | à essayer |
-| R9 | — | Pendant un maintien du bouton gauche, choisir « Droit » dans le HUD | Le maintien s'arrête, le bouton gauche est relâché, rien d'autre n'est enfoncé | à essayer |
-| R10 | — | Pendant un maintien : « Quitter », ou Alt+F4 sur le HUD | Le bouton est relâché, MacroHUD se ferme | à essayer |
+| R8 | — | « Activer » dans le HUD, puis mettre la souris sur la toile de Paint avant 3 s | Message « Activation dans 3 s… » qui décompte (2 s, 1 s) ; la macro reste « arrêtée » jusqu'à l'appui ; après 3 s le trait se dessine là où est la souris | à essayer |
+| R9 | — | Pendant un maintien du bouton gauche, choisir « Droit » dans le HUD | Le maintien s'arrête, le bouton gauche est relâché, rien d'autre n'est enfoncé (ce clic arrête ; « Droit » se choisit au clic suivant) | à essayer |
+| R10 | — | Pendant un maintien : « Quitter », ou Alt+F4 sur le HUD | « Quitter » : le premier clic arrête le maintien (bouton relâché), le second ferme MacroHUD ; Alt+F4 : bouton relâché et fermeture | à essayer |
 | R11 | — | Taper dans le Bloc-notes, puis F8 deux fois (souris hors du HUD) | Le Bloc-notes garde le clavier ; le HUD montre « active » puis « arrêtée » | à essayer |
 | R12 | — | Déplacer le HUD, le replier, quitter, relancer | Le HUD revient à la même place, replié | à essayer |
 | R13 | — | Lancer MacroHUD une seconde fois | Message « MacroHUD est déjà ouvert », la seconde copie se ferme | à essayer |
@@ -42,6 +42,9 @@ macro : maintenir un bouton de la souris enfoncé (D-04).
 | R15 | — | Lancer avec `--essai-plantage`, F8 dans Paint, puis F8 | Le trait s'arrête ; une boîte « MacroHUD : plantage » donne le chemin du rapport dans `%APPDATA%\MacroHUD\plantages\` | à essayer |
 | R16 | — | Pendant un maintien, Gestionnaire des tâches : fin de tâche du processus `macrohud`, puis relancer | Limite connue : le bouton reste enfoncé jusqu'à un clic sur ce bouton ; à la relance, le HUD le signale | à essayer |
 | R17 | — | Lancer MacroHUD sur un bureau clair, puis au-dessus d'un jeu | Le HUD ressemble à `maquettes/rendu-egui/variante-2-egui.png` : coins arrondis, rien de gris ni de noir autour (fenêtre transparente) | à essayer |
-| R18 | — | « Activer » dans le HUD | La ligne passe au vert (« Active · bouton gauche ») et un encadré bleu annonce l'appui dans 3 secondes | à essayer |
-| R19 | — | Replier le HUD, puis appuyer sur F8 la souris posée sur la pastille | La pastille seule ; dessous, un encadré « Attention : Sortez la souris du HUD… » qui disparaît au bout de 6 s | à essayer |
+| R18 | — | « Activer » dans le HUD | La ligne reste « arrêtée » ; un encadré bleu décompte « Activation dans 3 s… », 2 s, 1 s ; à l'appui la ligne passe au vert et l'encadré disparaît | à essayer |
+| R19 | — | Replier le HUD, puis appuyer sur F8 la souris posée sur la pastille | La pastille seule ; dessous, un encadré « Attention : Sors la souris du HUD… » qui disparaît au bout de 6 s | à essayer |
 | R20 | — | Affichage Windows à 125 % puis 150 % (Paramètres > Écran > Échelle) | Le HUD grandit d'autant, texte net, rien de coupé | à essayer |
+| R21 | — | « Changer », puis F9 sans cliquer ailleurs (le HUD garde le focus) ; de même avec Ctrl+C, Échap, puis F8 | F9 : « Nouveau raccourci… : F9 » ; Ctrl+C : refus expliqué ; Échap et F8 : « Raccourci inchangé » (F8 n'active pas la macro) ; `macrohud.log` dit par quelle voie la touche est arrivée | à essayer |
+| R22 | — | Pendant un maintien du bouton droit (puis du milieu) commencé sur Paint, cliquer « Arrêter » ou « Quitter » dans le HUD | Le premier clic arrête le maintien (bouton relâché, message « … arrêtée par ton clic sur le HUD… ») et n'arrive pas à Paint ; le clic suivant agit sur le HUD | à essayer |
+| R23 | — | « Activer », puis F8 pendant le décompte | Le décompte s'arrête, son encadré disparaît, rien n'est enfoncé | à essayer |

@@ -185,7 +185,7 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
             "indisponible",
             with(&|s| {
                 s.macros[0].status = MacroStatus::Unavailable(
-                    "F8 est déjà pris par un autre programme : choisissez un autre raccourci.".into(),
+                    "F8 est déjà pris par un autre programme : choisis un autre raccourci.".into(),
                 )
             }),
         ),
@@ -201,7 +201,7 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
         (
             "avertissement",
             with(&|s| {
-                s.message = Some(Message::new(MessageLevel::Warning, "Sortez la souris du HUD avant d'appuyer sur F8."))
+                s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."))
             }),
         ),
         (

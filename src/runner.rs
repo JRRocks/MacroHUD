@@ -24,7 +24,7 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 /// The app's handle on the engine thread.
 pub struct EngineHandle {
     sender: Sender<Input>,
-    wake: Box<dyn Fn() + Send>,
+    wake: Arc<dyn Fn() + Send + Sync>,
     shared: Arc<Mutex<Snapshot>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -33,7 +33,7 @@ impl EngineHandle {
     /// `wake` makes the engine thread look at its inputs (on Windows, a thread message).
     pub fn new(
         sender: Sender<Input>,
-        wake: Box<dyn Fn() + Send>,
+        wake: Arc<dyn Fn() + Send + Sync>,
         shared: Arc<Mutex<Snapshot>>,
         thread: JoinHandle<()>,
     ) -> Self {
@@ -43,6 +43,18 @@ impl EngineHandle {
     pub fn send(&self, command: Command) {
         if self.sender.send(Input::Command(command)).is_ok() {
             (self.wake)();
+        }
+    }
+
+    /// Something that reports system events to the engine from another thread (the HUD's own
+    /// keyboard, during a capture).
+    pub fn reporter(&self) -> impl Fn(Event) + Send + 'static {
+        let sender = self.sender.clone();
+        let wake = Arc::clone(&self.wake);
+        move |event| {
+            if sender.send(Input::Event(event)).is_ok() {
+                wake();
+            }
         }
     }
 

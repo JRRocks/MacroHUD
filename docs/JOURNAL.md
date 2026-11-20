@@ -21,6 +21,78 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Correctif 1 : capture avec le HUD au premier plan, clics pendant un maintien, décompte
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, avancée rapide sur la branche intégrée
+  `claude/gifted-turing-0izrcw` (`ba0452a`, HUD variante 2), puis le correctif, puis le commit vide
+  `[ETAPE-FINIE programmation-correctif-1]`. L'exécutable à essayer est l'artefact de la CI de ce
+  dernier commit.
+- **Objectif** : les trois corrections demandées après le test sur le PC de 0.1.5 (12 points OK,
+  1 échec, 1 non vérifiable).
+- **Réalisé** :
+  1. **Capture d'un raccourci avec le HUD au premier plan** (l'échec : 7 touches perdues sur 7).
+     Je n'ai pas Windows pour voir pourquoi le crochet clavier global (`WH_KEYBOARD_LL`) ne reçoit
+     pas ces touches-là ; plutôt que de deviner, la capture écoute maintenant de trois façons, et la
+     première réponse gagne :
+     - le crochet global, comme avant (touches tapées dans n'importe quelle fenêtre) ;
+     - un crochet clavier posé sur le seul fil du HUD (`WH_KEYBOARD`), installé au clic sur
+       « Changer » et retiré à la fin de la capture : il reçoit les touches qui arrivent au HUD
+       quand il a le focus, et les garde pour lui (le HUD ne les voit pas) ;
+     - un raccourci déjà enregistré pressé pendant une capture (F8, ou celui d'une autre macro) :
+       Windows le livre comme raccourci et non comme touche ; c'est désormais la réponse de la
+       capture (« Raccourci inchangé : F8. »), et non plus un ordre d'activer la macro.
+     Pour comprendre le prochain essai : `macrohud.log` dit, à chaque capture, par quelle voie la
+     touche est arrivée et combien d'événements clavier chaque crochet a vus.
+     Limite connue : avec le HUD au premier plan, une combinaison que Windows traite lui-même avant
+     toute fenêtre (Alt+Tab, Win+…) ne peut être vue que par le crochet global.
+  2. **Clics sur le HUD pendant un maintien du bouton droit ou du milieu.** Cause : une règle de
+     Windows. La fenêtre qui reçoit l'appui (Paint, le jeu) « capture » la souris tant que le bouton
+     est tenu : tous les clics vont alors à elle, même au-dessus du HUD (ni winit ni egui n'y sont
+     pour rien ; avec le bouton gauche, le problème ne se voyait pas car le clic gauche arrête déjà
+     le maintien). Correction : pendant un maintien, la surveillance de la souris intercepte un clic
+     sur le HUD (n'importe quel bouton, de la main ou d'un autre programme comme le test), arrête
+     tous les maintiens et garde ce clic pour elle : il n'arrive pas au jeu. Message : « « Maintenir
+     le clic » arrêtée par ton clic sur le HUD : clique à nouveau pour agir sur le HUD. » Le clic
+     suivant agit normalement sur le HUD. F8 et le vrai clic sur le bouton tenu arrêtent toujours la
+     macro. Les événements injectés par MacroHUD lui-même sont reconnus à leur signature et ignorés.
+  3. **Décompte de « Activer ».** Pendant les 3 s, la macro reste « arrêtée » (rien n'est enfoncé) ;
+     le message ponctuel du contrat, niveau info, décompte : « Activation dans 3 s : place la souris
+     là où le clic doit rester enfoncé. », puis 2 s, puis 1 s. À l'appui, ou si le décompte est
+     annulé (F8, « Arrêter »), le moteur retire ce message (le contrat ne change pas : le message
+     disparaît simplement du HUD). Changer de bouton pendant le décompte le laisse continuer avec le
+     nouveau bouton.
+  - Messages du moteur passés au tutoiement, comme le HUD (« Appuie sur une touche… ») et le
+    message demandé (« place la souris ») : « Sors la souris du HUD… », « choisis-en un autre »,
+    « clique-le une fois »… Les deux textes d'exemple écrits dans `src/hud/render.rs` (rendus PNG de
+    la session « visuel ») gardent l'ancienne formulation : à mettre à jour par elle si voulu.
+  - Aucun fichier de `src/hud/` modifié.
+- **Décisions** (choix techniques, à numéroter par la session maître si elle les retient) :
+  - pendant un maintien, un clic sur le HUD arrête d'abord tous les maintiens et n'agit pas sur le
+    HUD (seule façon de garder le HUD utilisable, et d'éviter que ce clic tombe dans le jeu) ;
+  - pendant une capture, un raccourci enregistré compte comme la touche capturée ;
+  - le moteur peut retirer son message (`Notice` sans message) ; tutoiement de tous les messages.
+- **Vérifications** :
+  - `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous Linux et pour la cible
+    `x86_64-pc-windows-msvc` : OK. `cargo test` : 100 tests OK sous Linux, dont les nouveaux :
+    décompte 3, 2, 1 puis appui et retrait du message ; tic en retard ; annulation par F8 et par
+    « Arrêter » ; changement de bouton pendant le décompte ; clic sur le HUD qui arrête tous les
+    maintiens (de la main et d'un autre programme) ; clic d'un autre programme ailleurs ignoré ;
+    raccourci enregistré pendant une capture ; première réponse de capture gagnante ; décodage des
+    messages clavier du fil du HUD ; retrait d'un message côté HUD.
+  - CI : voir l'exécution du commit `[ETAPE-FINIE programmation-correctif-1]` (tests Windows, dont
+    l'installation réelle du crochet clavier du fil du HUD).
+- **Non vérifié sur le PC** : R21 (capture avec le HUD au premier plan), R22 (clic sur le HUD pendant
+  un maintien droit ou milieu), R23 et R8, R18 mis à jour (décompte), R10 mis à jour (« Quitter »
+  pendant un maintien : premier clic = arrêt).
+- **Problèmes et dette** : la cause exacte du crochet global muet quand le HUD a le focus reste à
+  établir sur le PC (voir `macrohud.log`) ; avec le HUD au premier plan, Alt+Tab et les raccourcis
+  Win+… ne peuvent pas être capturés si ce crochet ne les voit pas.
+- **Prochaine étape** : nouveau test sur le PC (R8, R10, R18, R21 à R23), puis fusion par la session
+  maître.
+
+---
+
 ## 2026-11-20 · Le HUD choisi (variante 2) branché sur le moteur
 
 - **Session** : visuel

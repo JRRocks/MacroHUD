@@ -75,16 +75,29 @@ pub enum Command {
     CancelCapture,
 }
 
+/// Where a captured key came from (written in the run log, to understand a capture afterwards).
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeySource {
+    /// The low-level keyboard hook: keys typed in any window.
+    GlobalHook,
+    /// The keyboard of the HUD's own thread: keys typed while the HUD has the focus.
+    HudWindow,
+    /// A registered hotkey: Windows handed the key over as a hotkey, not as a key.
+    Hotkey,
+}
+
 /// What the system reports (on Windows: hotkeys and hooks).
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
     /// A registered hotkey was pressed.
     Hotkey(HotkeyId),
-    /// The user clicked a held button for real (the guard swallowed that click).
-    PhysicalClick(MouseButton),
+    /// A click the guard swallowed: on a held button, made by hand (`on_hud` false), or anywhere on
+    /// the HUD while buttons were held (`on_hud` true). The macros holding `buttons` must stop.
+    Click { buttons: ButtonSet, on_hud: bool },
     /// The capture of a new hotkey ended.
-    Captured(Outcome),
+    Captured { outcome: Outcome, source: KeySource },
 }
 
 /// One macro as the engine publishes it.
@@ -98,13 +111,21 @@ pub struct MacroSnapshot {
     pub options: MacroOptions,
 }
 
+/// The engine's latest word for the HUD's one-off message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    /// Each notice gets the next number: a new number is something new to show.
+    pub number: u64,
+    /// The message to show; `None` takes the engine's previous message away (a countdown that ended).
+    pub message: Option<Message>,
+}
+
 /// What the engine publishes after every change.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub macros: Vec<MacroSnapshot>,
     pub capturing: Option<MacroId>,
-    /// The latest message, with its number (each new message gets the next one).
-    pub message: Option<(u64, Message)>,
+    pub notice: Option<Notice>,
 }
 
 /// What a macro starts with: its definition and its saved settings.
@@ -125,10 +146,12 @@ enum Trigger {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Run {
     Stopped,
-    /// Started from the HUD: the button is pressed at `at`.
+    /// Started from the HUD: the button is pressed at `at`; until then the macro shows as stopped,
+    /// and a message counts down the seconds (`shown`: the number it shows).
     Arming {
         button: MouseButton,
         at: Instant,
+        shown: u64,
     },
     /// The button is down, held by the macro.
     Holding {
@@ -158,7 +181,18 @@ pub struct Engine<B: Backend> {
     backend: B,
     slots: Vec<Slot>,
     capture: Option<Capture>,
-    message: Option<(u64, Message)>,
+    notice: Option<Notice>,
+}
+
+/// The countdown shown between « Activer » and the press.
+fn countdown_text(seconds: u64) -> String {
+    format!("Activation dans {seconds} s : place la souris là où le clic doit rester enfoncé.")
+}
+
+/// Whole seconds left until `at`, rounded up (2.3 s left: « 3 s »).
+fn seconds_left(at: Instant, now: Instant) -> u64 {
+    let millis = at.saturating_duration_since(now).as_millis();
+    u64::try_from(millis.div_ceil(1000)).unwrap_or(u64::MAX)
 }
 
 /// « le bouton gauche » -> « Le bouton gauche ».
@@ -183,7 +217,7 @@ impl<B: Backend> Engine<B> {
                 run: Run::Stopped,
             })
             .collect();
-        Engine { backend, slots, capture: None, message: None }
+        Engine { backend, slots, capture: None, notice: None }
     }
 
     #[cfg(test)]
@@ -208,7 +242,7 @@ impl<B: Backend> Engine<B> {
             let earlier_owner =
                 self.slots[..i].iter().find(|s| s.def.available && s.hotkey == hotkey).map(|s| s.def.name);
             let reason = match earlier_owner {
-                Some(other) => Some(format!("{label} est déjà le raccourci de « {other} » : choisissez-en un autre.")),
+                Some(other) => Some(format!("{label} est déjà le raccourci de « {other} » : choisis-en un autre.")),
                 None => match self.backend.register_hotkey(hotkey) {
                     Ok(id) => {
                         self.slots[i].registered = Some(id);
@@ -216,10 +250,10 @@ impl<B: Backend> Engine<B> {
                         None
                     }
                     Err(RegisterError::Taken) => Some(format!(
-                        "{label} est déjà pris par Windows ou par un autre programme : choisissez un autre raccourci."
+                        "{label} est déjà pris par Windows ou par un autre programme : choisis un autre raccourci."
                     )),
                     Err(RegisterError::Other(e)) => {
-                        Some(format!("Windows refuse le raccourci {label} ({e}) : choisissez-en un autre."))
+                        Some(format!("Windows refuse le raccourci {label} ({e}) : choisis-en un autre."))
                     }
                 },
             };
@@ -268,42 +302,65 @@ impl<B: Backend> Engine<B> {
     pub fn event(&mut self, event: Event, now: Instant) {
         match event {
             Event::Hotkey(id) => {
-                if let Some(i) = self.slots.iter().position(|s| s.registered == Some(id)) {
-                    match self.slots[i].run {
-                        Run::Stopped => self.start_macro(i, Trigger::Hotkey, now),
-                        Run::Arming { .. } | Run::Holding { .. } => self.stop_macro(i),
-                    }
+                let Some(i) = self.slots.iter().position(|s| s.registered == Some(id)) else { return };
+                if self.capture.is_some() {
+                    // During a capture, a registered hotkey is a key the capture did not see: Windows
+                    // handed it over as a hotkey. It is the answer, not an order to start or stop.
+                    let hotkey = self.slots[i].hotkey;
+                    self.captured(Outcome::Chosen(hotkey), KeySource::Hotkey);
+                    return;
+                }
+                match self.slots[i].run {
+                    Run::Stopped => self.start_macro(i, Trigger::Hotkey, now),
+                    Run::Arming { .. } | Run::Holding { .. } => self.stop_macro(i),
                 }
             }
-            Event::PhysicalClick(button) => {
+            Event::Click { buttons, on_hud } => {
                 for i in 0..self.slots.len() {
-                    if self.slots[i].run == (Run::Holding { button }) {
+                    if let Run::Holding { button } = self.slots[i].run
+                        && buttons.contains(button)
+                    {
                         self.stop_macro(i);
                         let name = self.slots[i].def.name;
-                        crate::log::write(format!("« {name} » arrêtée par un clic physique."));
-                        self.say(MessageLevel::Info, format!("« {name} » arrêtée par votre clic."));
+                        if on_hud {
+                            crate::log::write(format!("« {name} » arrêtée par un clic sur le HUD."));
+                            self.say(
+                                MessageLevel::Info,
+                                format!("« {name} » arrêtée par ton clic sur le HUD : clique à nouveau pour agir sur le HUD."),
+                            );
+                        } else {
+                            crate::log::write(format!("« {name} » arrêtée par un clic physique."));
+                            self.say(MessageLevel::Info, format!("« {name} » arrêtée par ton clic."));
+                        }
                     }
                 }
             }
-            Event::Captured(outcome) => self.captured(outcome),
+            Event::Captured { outcome, source } => self.captured(outcome, source),
         }
     }
 
-    /// Does what is due at `now`: delayed presses, captures that lasted too long.
+    /// Does what is due at `now`: countdowns and delayed presses, captures that lasted too long.
     pub fn tick(&mut self, now: Instant) {
         for i in 0..self.slots.len() {
-            if let Run::Arming { button, at } = self.slots[i].run
-                && now >= at
-            {
-                if self.backend.pointer_on_hud() {
-                    self.slots[i].run = Run::Stopped;
-                    self.say(
-                        MessageLevel::Warning,
-                        "La souris était sur le HUD : rien n'a été enfoncé. Recommencez en la plaçant ailleurs.",
-                    );
-                } else {
-                    self.press_now(i, button);
+            let Run::Arming { button, at, shown } = self.slots[i].run else { continue };
+            if now < at {
+                let left = seconds_left(at, now);
+                if left < shown {
+                    self.slots[i].run = Run::Arming { button, at, shown: left };
+                    self.say(MessageLevel::Info, countdown_text(left));
                 }
+                continue;
+            }
+            self.slots[i].run = Run::Stopped;
+            if self.backend.pointer_on_hud() {
+                self.say(
+                    MessageLevel::Warning,
+                    "La souris était sur le HUD : rien n'a été enfoncé. Recommence en la plaçant ailleurs.",
+                );
+            } else {
+                // The countdown is over: its message goes, the button goes down.
+                self.withdraw();
+                self.press_now(i, button);
             }
         }
         if let Some(capture) = &self.capture
@@ -320,6 +377,10 @@ impl<B: Backend> Engine<B> {
     /// When [`Engine::tick`] has something to do next.
     pub fn next_deadline(&self) -> Option<Instant> {
         let arming = self.slots.iter().filter_map(|s| match s.run {
+            // The next second of the countdown, or the press itself.
+            Run::Arming { at, shown, .. } if shown > 1 => {
+                Some(at.checked_sub(Duration::from_secs(shown - 1)).unwrap_or(at))
+            }
             Run::Arming { at, .. } => Some(at),
             _ => None,
         });
@@ -352,8 +413,9 @@ impl<B: Backend> Engine<B> {
                     id: s.def.id,
                     status: match (&s.unavailable, s.run) {
                         (Some(reason), _) => MacroStatus::Unavailable(reason.clone()),
-                        (None, Run::Stopped) => MacroStatus::Stopped,
-                        (None, _) => MacroStatus::Active,
+                        // Nothing is pressed during the countdown: the macro still shows as stopped.
+                        (None, Run::Stopped | Run::Arming { .. }) => MacroStatus::Stopped,
+                        (None, Run::Holding { .. }) => MacroStatus::Active,
                     },
                     hotkey: s.hotkey,
                     hotkey_label: self.label(s.hotkey),
@@ -361,7 +423,7 @@ impl<B: Backend> Engine<B> {
                 })
                 .collect(),
             capturing: self.capture.as_ref().map(|c| self.slots[c.index].def.id),
-            message: self.message.clone(),
+            notice: self.notice.clone(),
         }
     }
 
@@ -375,11 +437,23 @@ impl<B: Backend> Engine<B> {
         hotkey.label(&|key| self.backend.layout_char(key))
     }
 
+    fn next_notice_number(&self) -> u64 {
+        self.notice.as_ref().map_or(1, |n| n.number + 1)
+    }
+
     fn say(&mut self, level: MessageLevel, text: impl Into<String>) {
         let text = text.into();
         crate::log::write(format!("Message ({level:?}) : {text}"));
-        let number = self.message.as_ref().map_or(1, |(n, _)| n + 1);
-        self.message = Some((number, Message::new(level, text)));
+        let number = self.next_notice_number();
+        self.notice = Some(Notice { number, message: Some(Message::new(level, text)) });
+    }
+
+    /// Takes the engine's current message away (the countdown it showed is over).
+    fn withdraw(&mut self) {
+        if self.notice.as_ref().is_some_and(|n| n.message.is_some()) {
+            let number = self.next_notice_number();
+            self.notice = Some(Notice { number, message: None });
+        }
     }
 
     /// Buttons held by macros right now.
@@ -418,20 +492,14 @@ impl<B: Backend> Engine<B> {
         }
         match trigger {
             Trigger::Hud => {
-                self.slots[i].run = Run::Arming { button, at: now + HUD_START_DELAY };
                 let seconds = HUD_START_DELAY.as_secs();
-                self.say(
-                    MessageLevel::Info,
-                    format!(
-                        "{} sera enfoncé dans {seconds} secondes : placez la souris là où il doit agir.",
-                        capitalized(button.phrase())
-                    ),
-                );
+                self.slots[i].run = Run::Arming { button, at: now + HUD_START_DELAY, shown: seconds };
+                self.say(MessageLevel::Info, countdown_text(seconds));
             }
             Trigger::Hotkey => {
                 if self.backend.pointer_on_hud() {
                     let label = self.label(self.slots[i].hotkey);
-                    self.say(MessageLevel::Warning, format!("Sortez la souris du HUD avant d'appuyer sur {label}."));
+                    self.say(MessageLevel::Warning, format!("Sors la souris du HUD avant d'appuyer sur {label}."));
                     return;
                 }
                 self.press_now(i, button);
@@ -473,7 +541,11 @@ impl<B: Backend> Engine<B> {
     fn stop_macro(&mut self, i: usize) {
         match self.slots[i].run {
             Run::Stopped => {}
-            Run::Arming { .. } => self.slots[i].run = Run::Stopped,
+            Run::Arming { .. } => {
+                // Nothing was pressed yet: the countdown just stops, and its message goes.
+                self.slots[i].run = Run::Stopped;
+                self.withdraw();
+            }
             Run::Holding { button } => {
                 // Release first: nothing may delay it.
                 let released = self.backend.release(button);
@@ -486,7 +558,7 @@ impl<B: Backend> Engine<B> {
                     Err(e) => self.say(
                         MessageLevel::Error,
                         format!(
-                            "Windows a refusé de relâcher {} ({e}) : cliquez-le une fois pour le libérer.",
+                            "Windows a refusé de relâcher {} ({e}) : clique-le une fois pour le libérer.",
                             button.phrase()
                         ),
                     ),
@@ -499,15 +571,27 @@ impl<B: Backend> Engine<B> {
         if self.slots[i].options == options {
             return;
         }
-        let running = self.slots[i].run != Run::Stopped;
-        if running {
-            // The held button is released before anything changes.
-            self.stop_macro(i);
-        }
-        self.slots[i].options = options;
-        if running {
-            let name = self.slots[i].def.name;
-            self.say(MessageLevel::Info, format!("Bouton changé : « {name} » est arrêtée."));
+        match self.slots[i].run {
+            Run::Stopped => self.slots[i].options = options,
+            Run::Arming { at, shown, .. } => {
+                // Nothing is pressed yet: the countdown goes on with the new button, if it is free.
+                self.slots[i].options = options;
+                let MacroOptions::HoldClick { button } = options;
+                if let Some(other) = self.other_user_of(button, i) {
+                    self.slots[i].run = Run::Stopped;
+                    let text = format!("{} est déjà maintenu par « {other} ».", capitalized(button.phrase()));
+                    self.say(MessageLevel::Warning, text);
+                } else {
+                    self.slots[i].run = Run::Arming { button, at, shown };
+                }
+            }
+            Run::Holding { .. } => {
+                // The held button is released before anything changes.
+                self.stop_macro(i);
+                self.slots[i].options = options;
+                let name = self.slots[i].def.name;
+                self.say(MessageLevel::Info, format!("Bouton changé : « {name} » est arrêtée."));
+            }
         }
     }
 
@@ -531,10 +615,18 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    fn captured(&mut self, outcome: Outcome) {
-        // A result that comes after a cancellation is ignored.
+    fn captured(&mut self, outcome: Outcome, source: KeySource) {
+        // A result that comes after a cancellation (or after another one) is ignored.
         let Some(capture) = self.capture.take() else { return };
         self.backend.stop_capture();
+        crate::log::write(format!(
+            "Capture : {outcome:?}, reçue par {}.",
+            match source {
+                KeySource::GlobalHook => "le crochet clavier global",
+                KeySource::HudWindow => "la fenêtre du HUD",
+                KeySource::Hotkey => "un raccourci déjà enregistré",
+            }
+        ));
         match outcome {
             Outcome::Cancelled => {
                 let label = self.label(self.slots[capture.index].hotkey);
@@ -572,7 +664,7 @@ impl<B: Backend> Engine<B> {
         if let Some(c) = self.backend.altgr_char(hotkey) {
             self.say(
                 MessageLevel::Error,
-                format!("{label} sert à écrire « {c} » (AltGr) sur ce clavier : choisissez-en un autre.{keep}"),
+                format!("{label} sert à écrire « {c} » (AltGr) sur ce clavier : choisis-en un autre.{keep}"),
             );
             return;
         }
@@ -721,7 +813,20 @@ mod tests {
     }
 
     fn message(engine: &Engine<Fake>) -> Message {
-        engine.snapshot().message.expect("a message").1
+        engine.snapshot().notice.expect("a notice").message.expect("a message, not a withdrawal")
+    }
+
+    /// The engine's current word: `None` before any message, `Some(None)` after a withdrawal.
+    fn notice_message(engine: &Engine<Fake>) -> Option<Option<Message>> {
+        engine.snapshot().notice.map(|n| n.message)
+    }
+
+    fn click(button: MouseButton) -> Event {
+        Event::Click { buttons: ButtonSet::only(button), on_hud: false }
+    }
+
+    fn captured(outcome: Outcome) -> Event {
+        Event::Captured { outcome, source: KeySource::GlobalHook }
     }
 
     fn calls(engine: &mut Engine<Fake>) -> Vec<Call> {
@@ -740,7 +845,7 @@ mod tests {
         let s = e.snapshot();
         assert_eq!(s.macros[0].hotkey_label, "F8");
         assert_eq!(s.macros[0].status, MacroStatus::Stopped);
-        assert_eq!(s.message, None);
+        assert_eq!(s.notice, None);
     }
 
     #[test]
@@ -761,15 +866,15 @@ mod tests {
         let now = Instant::now();
         press_hotkey(&mut e, now);
         calls(&mut e);
-        e.event(Event::PhysicalClick(Right), now);
+        e.event(click(Right), now);
         assert!(calls(&mut e).is_empty(), "another button changes nothing");
         assert_eq!(status(&e), MacroStatus::Active);
-        e.event(Event::PhysicalClick(Left), now);
+        e.event(click(Left), now);
         assert_eq!(calls(&mut e), vec![Call::Release(Left), Call::Watch(ButtonSet::EMPTY)]);
         assert_eq!(status(&e), MacroStatus::Stopped);
         assert_eq!(message(&e).level, MessageLevel::Info);
         // A late duplicate does nothing.
-        e.event(Event::PhysicalClick(Left), now);
+        e.event(click(Left), now);
         assert!(calls(&mut e).is_empty());
     }
 
@@ -794,7 +899,7 @@ mod tests {
         let now = Instant::now();
         e.command(Command::SetOptions(ID, MacroOptions::HoldClick { button: Middle }), now);
         assert!(calls(&mut e).is_empty());
-        assert_eq!(e.snapshot().message, None);
+        assert_eq!(e.snapshot().notice, None);
         e.command(Command::SetOptions(ID, MacroOptions::HoldClick { button: Middle }), now);
         assert!(calls(&mut e).is_empty());
     }
@@ -811,22 +916,75 @@ mod tests {
     }
 
     #[test]
-    fn started_from_the_hud_it_waits_before_pressing() {
+    fn started_from_the_hud_it_counts_down_then_presses() {
         let mut e = engine();
         let now = Instant::now();
+        let s = Duration::from_secs(1);
         e.command(Command::Start(ID), now);
         assert!(calls(&mut e).is_empty());
-        assert_eq!(status(&e), MacroStatus::Active);
-        assert_eq!(message(&e).level, MessageLevel::Info);
-        assert!(message(&e).text.contains("3 secondes"), "{}", message(&e).text);
+        // Nothing is pressed yet: the macro shows as stopped, a message counts down.
+        assert_eq!(status(&e), MacroStatus::Stopped);
+        let first = message(&e);
+        assert_eq!(first.level, MessageLevel::Info);
+        assert_eq!(first.text, "Activation dans 3 s : place la souris là où le clic doit rester enfoncé.");
+        assert_eq!(e.next_deadline(), Some(now + s));
+        e.tick(now + s / 2);
+        assert_eq!(message(&e), first, "no new message before the next second");
+        e.tick(now + s);
+        assert_eq!(message(&e).text, "Activation dans 2 s : place la souris là où le clic doit rester enfoncé.");
+        assert_eq!(e.next_deadline(), Some(now + 2 * s));
+        e.tick(now + 2 * s);
+        assert_eq!(message(&e).text, "Activation dans 1 s : place la souris là où le clic doit rester enfoncé.");
         assert_eq!(e.next_deadline(), Some(now + HUD_START_DELAY));
-        e.tick(now + Duration::from_secs(1));
         assert!(calls(&mut e).is_empty());
+        assert_eq!(status(&e), MacroStatus::Stopped);
         e.tick(now + HUD_START_DELAY);
         assert_eq!(calls(&mut e), vec![Call::Watch(ButtonSet::only(Left)), Call::Press(Left)]);
+        assert_eq!(status(&e), MacroStatus::Active);
+        assert_eq!(notice_message(&e), Some(None), "the countdown is taken away at the press");
         assert_eq!(e.next_deadline(), None);
         e.command(Command::Stop(ID), now);
         assert_eq!(calls(&mut e), vec![Call::Release(Left), Call::Watch(ButtonSet::EMPTY)]);
+    }
+
+    #[test]
+    fn a_late_tick_skips_to_the_right_second() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::Start(ID), now);
+        e.tick(now + Duration::from_millis(2_300));
+        assert!(message(&e).text.starts_with("Activation dans 1 s"), "{}", message(&e).text);
+        assert!(calls(&mut e).is_empty());
+    }
+
+    #[test]
+    fn cancelling_the_countdown_takes_its_message_away() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::Start(ID), now);
+        press_hotkey(&mut e, now + Duration::from_secs(1));
+        assert_eq!(status(&e), MacroStatus::Stopped);
+        assert_eq!(notice_message(&e), Some(None));
+        e.tick(now + HUD_START_DELAY);
+        assert!(calls(&mut e).is_empty(), "nothing pressed after a cancel");
+        // A second « Activer » during the countdown changes nothing.
+        e.command(Command::Start(ID), now);
+        e.command(Command::Start(ID), now + Duration::from_millis(500));
+        assert!(message(&e).text.starts_with("Activation dans 3 s"));
+        e.command(Command::Stop(ID), now);
+        assert_eq!(notice_message(&e), Some(None));
+    }
+
+    #[test]
+    fn changing_the_button_during_the_countdown_keeps_it_going_with_the_new_button() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::Start(ID), now);
+        e.command(Command::SetOptions(ID, MacroOptions::HoldClick { button: Middle }), now);
+        assert_eq!(e.snapshot().macros[0].options, MacroOptions::HoldClick { button: Middle });
+        assert!(message(&e).text.starts_with("Activation dans 3 s"), "no « arrêtée » message");
+        e.tick(now + HUD_START_DELAY);
+        assert_eq!(calls(&mut e), vec![Call::Watch(ButtonSet::only(Middle)), Call::Press(Middle)]);
     }
 
     #[test]
@@ -858,12 +1016,69 @@ mod tests {
     }
 
     #[test]
+    fn a_click_on_the_hud_during_a_hold_stops_every_hold() {
+        let mut second = HOLD_CLICK;
+        second.id = MacroId("deuxieme");
+        second.name = "Deuxième";
+        second.default_hotkey = Hotkey::new(Modifiers::NONE, vk::F9);
+        second.default_options = MacroOptions::HoldClick { button: Middle };
+        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(second)]);
+        e.start();
+        let now = Instant::now();
+        e.command(Command::SetOptions(ID, MacroOptions::HoldClick { button: Right }), now);
+        press_hotkey(&mut e, now);
+        let id2 = hotkey_id(&e, 1);
+        e.event(Event::Hotkey(id2), now);
+        calls(&mut e);
+        // A left click on the HUD (it cannot reach the HUD while the other window holds the mouse).
+        let all = ButtonSet::only(Right).with(Middle);
+        e.event(Event::Click { buttons: all, on_hud: true }, now);
+        let made = calls(&mut e);
+        assert!(made.contains(&Call::Release(Right)) && made.contains(&Call::Release(Middle)), "{made:?}");
+        assert_eq!(made.last(), Some(&Call::Watch(ButtonSet::EMPTY)));
+        assert_eq!(e.snapshot().macros[0].status, MacroStatus::Stopped);
+        assert_eq!(e.snapshot().macros[1].status, MacroStatus::Stopped);
+        assert_eq!(message(&e).level, MessageLevel::Info);
+        assert!(message(&e).text.contains("clique à nouveau pour agir sur le HUD"), "{}", message(&e).text);
+    }
+
+    #[test]
+    fn during_a_capture_a_registered_hotkey_is_the_captured_key() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::StartCapture(ID), now);
+        calls(&mut e);
+        // The HUD had the focus: F8 reached Windows' hotkeys instead of the capture.
+        press_hotkey(&mut e, now);
+        let made = calls(&mut e);
+        assert!(!made.iter().any(|c| matches!(c, Call::Press(_) | Call::Watch(_))), "no press: {made:?}");
+        assert_eq!(made, vec![Call::StopCapture]);
+        assert_eq!(e.snapshot().capturing, None);
+        assert_eq!(message(&e).text, "Raccourci inchangé : F8.");
+        assert_eq!(status(&e), MacroStatus::Stopped);
+        // Outside a capture, F8 toggles again.
+        press_hotkey(&mut e, now);
+        assert_eq!(status(&e), MacroStatus::Active);
+    }
+
+    #[test]
+    fn the_first_capture_result_wins() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::StartCapture(ID), now);
+        let f9 = Hotkey::new(Modifiers::NONE, vk::F9);
+        e.event(Event::Captured { outcome: Outcome::Chosen(f9), source: KeySource::HudWindow }, now);
+        e.event(captured(Outcome::Chosen(ctrl_alt(vk::KEY_M))), now);
+        assert_eq!(e.snapshot().macros[0].hotkey, f9);
+    }
+
+    #[test]
     fn the_hotkey_with_the_pointer_on_the_hud_presses_nothing() {
         let mut e = engine_with(Fake { pointer_on_hud: true, ..Fake::default() });
         press_hotkey(&mut e, Instant::now());
         assert!(calls(&mut e).is_empty());
         assert_eq!(status(&e), MacroStatus::Stopped);
-        assert_eq!(message(&e).text, "Sortez la souris du HUD avant d'appuyer sur F8.");
+        assert_eq!(message(&e).text, "Sors la souris du HUD avant d'appuyer sur F8.");
     }
 
     #[test]
@@ -892,7 +1107,7 @@ mod tests {
         e.command(Command::StartCapture(ID), now);
         assert_eq!(e.snapshot().capturing, Some(ID));
         let new = ctrl_alt(vk::KEY_M);
-        e.event(Event::Captured(Outcome::Chosen(new)), now);
+        e.event(captured(Outcome::Chosen(new)), now);
         assert_eq!(
             calls(&mut e),
             vec![Call::StartCapture, Call::StopCapture, Call::Register(new), Call::Unregister(old)]
@@ -915,7 +1130,7 @@ mod tests {
         let mut e = engine_with(Fake { taken_elsewhere: vec![new], ..Fake::default() });
         let now = Instant::now();
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(new)), now);
+        e.event(captured(Outcome::Chosen(new)), now);
         let made = calls(&mut e);
         assert!(!made.iter().any(|c| matches!(c, Call::Unregister(_) | Call::Register(_))), "{made:?}");
         assert_eq!(e.snapshot().macros[0].hotkey, Hotkey::F8);
@@ -938,7 +1153,7 @@ mod tests {
         calls(&mut e);
         let now = Instant::now();
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(second.default_hotkey)), now);
+        e.event(captured(Outcome::Chosen(second.default_hotkey)), now);
         assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_))));
         assert_eq!(message(&e).text, "F9 est déjà le raccourci de « Deuxième ». Le raccourci reste F8.");
         // Each macro toggles with its own hotkey; both can run at once on different buttons.
@@ -954,7 +1169,7 @@ mod tests {
                 Call::Press(Right),
             ]
         );
-        e.event(Event::PhysicalClick(Left), now);
+        e.event(click(Left), now);
         assert_eq!(calls(&mut e), vec![Call::Release(Left), Call::Watch(ButtonSet::only(Right))]);
         assert_eq!(e.snapshot().macros[1].status, MacroStatus::Active);
     }
@@ -988,7 +1203,7 @@ mod tests {
             Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::KEY_C),
         ] {
             e.command(Command::StartCapture(ID), now);
-            e.event(Event::Captured(Outcome::Chosen(refused)), now);
+            e.event(captured(Outcome::Chosen(refused)), now);
             assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_))));
             let m = message(&e);
             assert_eq!(m.level, MessageLevel::Error);
@@ -1002,7 +1217,7 @@ mod tests {
         let mut e = engine_with(Fake { altgr: Some((euro, '€')), ..Fake::default() });
         let now = Instant::now();
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(euro)), now);
+        e.event(captured(Outcome::Chosen(euro)), now);
         assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_))));
         assert!(message(&e).text.contains("« € »"), "{}", message(&e).text);
     }
@@ -1012,11 +1227,11 @@ mod tests {
         let mut e = engine();
         let now = Instant::now();
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(Hotkey::F8)), now);
+        e.event(captured(Outcome::Chosen(Hotkey::F8)), now);
         assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_) | Call::Unregister(_))));
         assert_eq!(message(&e).text, "Raccourci inchangé : F8.");
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Cancelled), now);
+        e.event(captured(Outcome::Cancelled), now);
         assert_eq!(message(&e).text, "Raccourci inchangé : F8.");
         assert_eq!(e.snapshot().capturing, None);
     }
@@ -1037,7 +1252,7 @@ mod tests {
         assert_eq!(calls(&mut e), vec![Call::StartCapture, Call::StopCapture]);
         assert_eq!(e.snapshot().capturing, None);
         // A result arriving after the cancellation is ignored.
-        e.event(Event::Captured(Outcome::Chosen(ctrl_alt(vk::KEY_M))), now);
+        e.event(captured(Outcome::Chosen(ctrl_alt(vk::KEY_M))), now);
         assert!(calls(&mut e).is_empty());
         assert_eq!(e.snapshot().macros[0].hotkey, Hotkey::F8);
     }
@@ -1046,7 +1261,7 @@ mod tests {
     fn a_hotkey_taken_at_startup_makes_the_macro_unavailable_until_another_is_chosen() {
         let mut e = Engine::new(Fake { taken_elsewhere: vec![Hotkey::F8], ..Fake::default() }, &[setup(HOLD_CLICK)]);
         e.start();
-        let reason = "F8 est déjà pris par Windows ou par un autre programme : choisissez un autre raccourci.";
+        let reason = "F8 est déjà pris par Windows ou par un autre programme : choisis un autre raccourci.";
         assert_eq!(status(&e), MacroStatus::Unavailable(reason.into()));
         assert_eq!(message(&e).level, MessageLevel::Warning);
         let now = Instant::now();
@@ -1056,11 +1271,11 @@ mod tests {
         assert_eq!(status(&e), MacroStatus::Unavailable(reason.into()));
         // F8 is still taken: refused, without "le raccourci reste" since F8 does not work.
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(Hotkey::F8)), now);
+        e.event(captured(Outcome::Chosen(Hotkey::F8)), now);
         assert_eq!(message(&e).text, "F8 est déjà pris par Windows ou par un autre programme.");
         // Another key: the macro becomes available.
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(Hotkey::new(Modifiers::NONE, vk::F9))), now);
+        e.event(captured(Outcome::Chosen(Hotkey::new(Modifiers::NONE, vk::F9))), now);
         assert_eq!(status(&e), MacroStatus::Stopped);
         press_hotkey(&mut e, now);
         assert_eq!(status(&e), MacroStatus::Active);
@@ -1073,7 +1288,7 @@ mod tests {
         e.backend_mut().taken_elsewhere.clear();
         let now = Instant::now();
         e.command(Command::StartCapture(ID), now);
-        e.event(Event::Captured(Outcome::Chosen(Hotkey::F8)), now);
+        e.event(captured(Outcome::Chosen(Hotkey::F8)), now);
         assert_eq!(status(&e), MacroStatus::Stopped);
         assert_eq!(message(&e).text, "Nouveau raccourci de « Maintenir le clic » : F8.");
     }
@@ -1130,9 +1345,9 @@ mod tests {
         let mut e = engine_with(Fake { pointer_on_hud: true, ..Fake::default() });
         let now = Instant::now();
         press_hotkey(&mut e, now);
-        let first = e.snapshot().message.unwrap().0;
+        let first = e.snapshot().notice.unwrap().number;
         press_hotkey(&mut e, now);
-        let second = e.snapshot().message.unwrap().0;
+        let second = e.snapshot().notice.unwrap().number;
         assert_eq!(second, first + 1);
     }
 }

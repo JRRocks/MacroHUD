@@ -15,6 +15,15 @@ use crate::hotkey::{Hotkey, Modifier, Modifiers, Vk, modifier_of, vk};
 /// Ctrl+Alt+Suppr) must neither keep the keyboard hook in place nor swallow the key's next press.
 pub const RELEASE_WAIT: Duration = Duration::from_secs(10);
 
+/// The key and its direction (true: pressed or repeated) of a keyboard message as a thread-level
+/// keyboard hook (`WH_KEYBOARD`) sees it: `wparam` is the key code, bit 31 of `lparam` is set when
+/// the key is being released.
+pub fn key_message(wparam: usize, lparam: isize) -> (Vk, bool) {
+    let key = Vk::try_from(wparam).unwrap_or(0);
+    let released = (lparam as u64) & (1 << 31) != 0;
+    (key, !released)
+}
+
 /// How a capture ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -242,6 +251,29 @@ mod tests {
         // A capture still waiting for its key never expires this way (the engine's timeout ends it).
         let waiting = KeyCapture::new(Modifiers::NONE);
         assert!(!waiting.expired(Instant::now() + RELEASE_WAIT * 10));
+    }
+
+    #[test]
+    fn keyboard_messages_of_the_hud_thread_are_decoded() {
+        // F9 pressed (repeat count 1, scan code 0x43), then released (bits 30 and 31 set).
+        assert_eq!(key_message(0x78, 0x0043_0001), (vk::F9, true));
+        assert_eq!(key_message(0x78, 0xC043_0001_u32 as i32 as isize), (vk::F9, false));
+        // Auto-repeat: previous state down (bit 30), still a press.
+        assert_eq!(key_message(0x78, 0x4043_0001), (vk::F9, true));
+        // Generic modifier codes, as the window messages give them.
+        assert_eq!(key_message(usize::from(vk::CONTROL), 0x001D_0001), (vk::CONTROL, true));
+        assert_eq!(key_message(0x1_0000, 0), (0, true), "not a key code");
+    }
+
+    #[test]
+    fn a_capture_through_window_messages_uses_generic_modifiers() {
+        let mut c = KeyCapture::new(Modifiers::NONE);
+        let d = run(&mut c, &[(vk::CONTROL, true), (vk::MENU, true), (vk::KEY_M, true)]);
+        let expected = Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl).with(Modifier::Alt), vk::KEY_M);
+        assert_eq!(d[2].outcome, Some(Outcome::Chosen(expected)));
+        let d = run(&mut c, &[(vk::KEY_M, false), (vk::MENU, false), (vk::CONTROL, false)]);
+        assert!(d.iter().all(|d| d.swallow));
+        assert!(!c.needs_events());
     }
 
     #[test]
