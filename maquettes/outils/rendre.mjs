@@ -110,6 +110,31 @@ const overflows = await page.evaluate(() => {
 for (const o of overflows) console.log(o);
 failures += overflows.length;
 
+// --fonds <dossier>: the three background scenes alone, 960 × 880 (used by maquettes/egui).
+const fondsIdx = process.argv.indexOf('--fonds');
+if (fondsIdx > 0) {
+  const dir = resolve(process.argv[fondsIdx + 1]);
+  for (const name of ['bureau', 'nuit', 'jour']) {
+    await page.evaluate((n) => {
+      document.getElementById('export-fond')?.remove();
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.id = 'export-fond';
+      svg.setAttribute('width', '960');
+      svg.setAttribute('height', '880');
+      svg.style.cssText = 'position:fixed;left:0;top:0;z-index:99';
+      const use = document.createElementNS(ns, 'use');
+      use.setAttribute('href', `#sc-${n}`);
+      svg.appendChild(use);
+      document.body.appendChild(svg);
+    }, name);
+    const path = join(dir, `${name}.png`);
+    await page.screenshot({ path, clip: { x: 0, y: 0, width: 960, height: 880 } });
+    console.log(`fond : ${path}`);
+  }
+  await page.evaluate(() => document.getElementById('export-fond')?.remove());
+}
+
 if (GRAY_DIR) {
   await page.addStyleTag({ content: 'html{filter:grayscale(1)}' });
   await shoot(GRAY_DIR, '-gris');

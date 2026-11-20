@@ -21,6 +21,53 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Le HUD choisi (variante 2) dessiné en egui, en attente du moteur
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw`, commit « HUD variante 2 en egui, avant
+  branchement » (après fusion de `origin/main` pour D-12).
+- **Objectif** : étape 2, premier temps (demande de la session maître) : coder le HUD de la
+  variante 2 dans `src/hud/` sans attendre la session « programmation », et en produire des PNG du
+  vrai rendu egui.
+- **Réalisé** : `src/hud/` (egui 0.37) : types de vue miroirs du contrat (`view.rs`), couleurs et
+  mesures de la maquette (`style.rs`), police Inter embarquée avec sa licence OFL (`police/`, le
+  fichier variable exact des maquettes, 120 Ko ; graisses par l'axe `wght`), icônes en formes
+  simples, composants (ligne de macro, touche, sélecteur Gauche/Droit/Milieu, zone « Appuie sur une
+  touche… », messages, pastille repliée), `Hud::size` et `fit_window` pour la fenêtre. Rendu
+  logiciel en PNG pour les tests (`render.rs`, sans carte graphique). Crate d'essai
+  `maquettes/egui/` (inclut `src/hud/` tel quel) : `rendus/variante-2-egui.png` reprend la planche de
+  la maquette avec le vrai rendu ; `rendus/hors-maquette-egui.png` montre trois états que la
+  maquette n'avait pas (macro indisponible, message d'information, d'erreur), à valider.
+- **Décisions** : aucune décision de l'utilisateur. Choix de présentation, à confirmer par la
+  session maître : réglages d'une macro fermés au lancement (la flèche les ouvre ; ils s'ouvrent
+  seuls pendant la capture d'un raccourci ou quand un message concerne la macro) ; pastille repliée
+  à plusieurs macros : la première active, sinon la première disponible ; macro indisponible : sa
+  raison en entier dans un encadré sous sa ligne.
+- **Vérifications** : dans `maquettes/egui/` : `cargo test` (6 tests verts : chaque vue a la taille
+  exacte de la maquette ; ligne active verte au pixel près ; de vrais clics souris envoyés à egui
+  donnent Activer, Arrêter, bouton Droit, Changer, Annuler, Replier, Déplier, Quitter ; une macro
+  « À venir » ne réagit pas ; la fenêtre n'est redimensionnée qu'une fois par changement),
+  `cargo fmt --check` et `cargo clippy --all-targets -- -D warnings` sans remarque. Planche egui
+  comparée à la maquette agrandie trois fois : mêmes positions, écarts limités au lissage du texte.
+- **Non vérifié sur le PC** : fenêtre réelle sous Windows (transparence des coins arrondis, mise à
+  l'échelle 125/150 %, rendu GPU d'eframe au lieu du rendu logiciel des tests).
+- **Problèmes et dette** : à trancher avec la session maître, sans toucher au moteur :
+  1. Contrat, message : le HUD affiche un titre (« Raccourci refusé ») et une explication, et doit
+     savoir quelle macro est concernée pour proposer « Choisir une autre touche » ; le contrat ne
+     prévoit qu'un texte et un niveau.
+  2. Contrat, macros « À venir » : le HUD montre un petit dessin par sorte de macro (souris, clic
+     répété, touche) ; l'intégration devra dire quelle sorte est chaque macro.
+  3. Fenêtre : pas d'ombre dans la vraie fenêtre (sa marge transparente avalerait les clics autour
+     du HUD) ; coins arrondis par une fenêtre transparente (rayon 9) ; suggestion : que cliquer sur
+     le HUD ne retire pas le focus au jeu (style Windows « no activate »).
+  4. Version d'egui : codé pour egui 0.37 ; à aligner sur la version que choisira la session
+     « programmation ».
+- **Prochaine étape** : recevoir le nom de la branche « programmation », la fusionner avec
+  `origin/main`, brancher `src/hud/` sur ses types du contrat, régler la fenêtre, garder le test de
+  rendu PNG dans le crate principal.
+
+---
+
 ## 2026-11-20 · Cinq maquettes du HUD à choisir
 
 - **Session** : visuel
