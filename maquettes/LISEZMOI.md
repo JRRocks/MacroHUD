@@ -71,3 +71,30 @@ MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::   # refait toutes ces imag
 
 Sans `MACROHUD_RENDUS`, `cargo test` écrit les vues seules dans `target/rendus-hud/`. Les fonds des
 planches (`fonds/`) viennent de la page des maquettes : `node maquettes/outils/rendre.mjs --fonds maquettes/fonds`.
+
+## Aperçu de « Multi-clic » (tâche P2.2)
+
+`multi-clic/apercu.html` : une page sans script, lisible à 400 px de large, qui s'ouvre seule (ses
+images y sont intégrées). En haut, le HUD d'aujourd'hui ; puis le HUD à deux macros (« Maintenir le
+clic » F8, « Multi-clic » F9) en trois pistes pour régler la rapidité : A, un curseur de 1 à 15 ;
+B, des boutons − et + ; C, trois préréglages et un réglage fin. Trois vues par piste : réglages
+ouverts, macro arrêtée ; active ; active avec la souris sur le HUD (clics en pause). En bas, les
+questions pour l'utilisateur. Ce sont des maquettes : rien n'est codé dans `src/hud/` avant son choix.
+
+- `multi-clic/aujourdhui-*@2x.png` : copies de `rendu-egui/vue-a@2x.png` et `vue-b@2x.png`, le HUD
+  actuel rendu par son propre test.
+- `multi-clic/a-*`, `b-*`, `c-*@2x.png` : les neuf vues, dessinées à 200 % avec egui par
+  `multi-clic/rendu/`, un petit programme à part (hors de la compilation de MacroHUD et de sa CI) qui
+  reprend tels quels les fichiers du HUD (`style.rs`, `text.rs`, `icons.rs`, `parts.rs`) et le
+  contrat (`src/contract.rs`) ; seule la mise en page à deux macros et le réglage de la rapidité sont
+  propres à la maquette. « Multi-clic » n'étant pas encore dans le contrat (P2.1), ses données y sont
+  décrites d'après `docs/CONTRAT-HUD.md`.
+
+```bash
+MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::                         # le HUD actuel, d'abord
+cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les neuf vues et la page
+cargo test --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml    # aucune ligne d'état coupée
+```
+
+Le texte de la page se modifie dans `multi-clic/rendu/apercu.modele.html`, puis la commande ci-dessus
+refait `apercu.html`.

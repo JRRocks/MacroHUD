@@ -21,6 +21,52 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Aperçu du HUD avec « Multi-clic » : trois façons de régler la rapidité
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw`, avancée sur `integration/passage-3`
+  (`43f796d`), puis le commit de l'aperçu et le marqueur `[ETAPE-FINIE visuel-apercu-multiclic]`.
+- **Objectif** : P2.2, montrer le HUD à deux macros avant d'en coder quoi que ce soit, avec trois
+  pistes pour régler la rapidité de « Multi-clic ».
+- **Réalisé** :
+  - `maquettes/multi-clic/apercu.html` : page sans script, ses images intégrées (data URI), les PNG à
+    côté. En haut, « Aujourd'hui » ; puis les pistes A (curseur de 1 à 15), B (− et + autour de la
+    valeur) et C (Lent 5, Moyen 10, Rapide 15, et un réglage fin), trois vues chacune : réglages
+    ouverts, macro arrêtée ; active ; active avec la souris sur le HUD. Ma recommandation (A) en
+    premier, des pour et contre appuyés sur la Library UI/UX (ch. 5, 6, 19, 39, 41), puis quatre
+    questions numérotées, dont la plage 1–15 clics/s, 10 par défaut (D-22), à garder ou corriger.
+  - Les neuf vues sont rendues avec egui par `maquettes/multi-clic/rendu/`, un petit programme à part
+    (son propre workspace, hors de la compilation de MacroHUD et de sa CI) qui compile tels quels
+    `style.rs`, `text.rs`, `icons.rs`, `parts.rs` du HUD et `src/contract.rs` ; seules la mise en page
+    à deux macros et les trois façons de régler la rapidité y sont propres. La flèche de la souris
+    de la vue 3 est dessinée par-dessus : elle ne fait pas partie du HUD.
+  - « Aujourd'hui » : `rendu-egui/vue-a@2x.png` et `vue-b@2x.png`, refaits par le test du HUD actuel
+    (`MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::`) : identiques à ceux du dépôt.
+  - `maquettes/LISEZMOI.md` : comment refaire l'aperçu.
+- **Décisions** : aucune, l'utilisateur choisit. Deux textes proposés faute de place, à confirmer
+  (questions 2 et 3) : la ligne « Active · gauche, 10/s » (et « Arrêtée · gauche, 10/s »), car
+  « Active · 10 clics/s, gauche » demande 150,5 pt pour 143 pt à côté de la touche F9 et serait
+  coupée ; la pause « En pause · souris ici », avec deux barres, la ligne restant verte et le HUD
+  gardant sa taille (« En pause · souris sur le HUD » demande 163 pt).
+- **Vérifications** :
+  - Programme de maquette : `cargo fmt --check`, `cargo clippy --release --all-targets --locked --
+    -D warnings` et `cargo test --release --locked` passent ; son test vérifie qu'aucune ligne d'état
+    de « Multi-clic » n'est coupée (3 boutons × 15 rapidités × 3 états). Deux générations donnent
+    les mêmes octets.
+  - Page ouverte dans Chromium (Playwright) à 400 px et à 1280 px de large : aucun défilement
+    horizontal, les 11 images affichées à 322 px, aucun script, aucune requête vers l'extérieur.
+  - `cargo fmt --check` à la racine passe ; aucun fichier de `src/` n'est modifié.
+- **Non vérifié sur le PC** : rien, ce sont des maquettes. La page n'a été ouverte que dans
+  Chromium, pas dans Edge ni Firefox.
+- **Problèmes et dette** :
+  - `src/contract.rs` n'a pas encore « Multi-clic » (P2.1) : la maquette en décrit les données d'après
+    `docs/CONTRAT-HUD.md`. Pour P2.3, il faudra au HUD : le bouton cliqué, la rapidité et ses bornes,
+    l'état « clics suspendus » et l'action qui change bouton et rapidité.
+  - L'icône « pause » (deux barres) est dessinée dans la maquette ; elle rejoindra `src/hud/icons.rs`
+    en P2.3 si la question 3 est acceptée.
+- **Prochaine étape** : le choix de l'utilisateur, transmis par la session maître avec la branche du
+  moteur, puis P2.3.
+
 ## 2026-11-20 · Cadrage de « Multi-clic », la deuxième macro
 
 - **Session** : maître

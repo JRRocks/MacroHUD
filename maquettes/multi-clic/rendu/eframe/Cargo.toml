@@ -1,0 +1,10 @@
+[package]
+name = "maquette-eframe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Gives the HUD's files the `eframe::egui` path they use, without a window."
+
+[dependencies]
+# The egui of MacroHUD (its Cargo.lock: 0.37.0).
+egui = "=0.37.0"
