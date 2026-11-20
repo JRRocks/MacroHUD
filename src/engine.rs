@@ -259,7 +259,7 @@ impl<B: Backend> Engine<B> {
             };
             if let Some(reason) = reason {
                 let name = self.slots[i].def.name;
-                self.say(MessageLevel::Warning, format!("« {name} » est indisponible : {reason}"));
+                self.say(i, MessageLevel::Warning, format!("« {name} » est indisponible : {reason}"));
                 self.slots[i].unavailable = Some(reason);
             }
         }
@@ -292,7 +292,7 @@ impl<B: Backend> Engine<B> {
                 if let Some(capture) = self.capture.take() {
                     self.backend.stop_capture();
                     let label = self.label(self.slots[capture.index].hotkey);
-                    self.say(MessageLevel::Info, format!("Raccourci inchangé : {label}."));
+                    self.say(capture.index, MessageLevel::Info, format!("Raccourci inchangé : {label}."));
                 }
             }
         }
@@ -324,13 +324,12 @@ impl<B: Backend> Engine<B> {
                         let name = self.slots[i].def.name;
                         if on_hud {
                             crate::log::write(format!("« {name} » arrêtée par un clic sur le HUD."));
-                            self.say(
-                                MessageLevel::Info,
+                            self.say(i, MessageLevel::Info,
                                 format!("« {name} » arrêtée par ton clic sur le HUD : clique à nouveau pour agir sur le HUD."),
                             );
                         } else {
                             crate::log::write(format!("« {name} » arrêtée par un clic physique."));
-                            self.say(MessageLevel::Info, format!("« {name} » arrêtée par ton clic."));
+                            self.say(i, MessageLevel::Info, format!("« {name} » arrêtée par ton clic."));
                         }
                     }
                 }
@@ -347,13 +346,14 @@ impl<B: Backend> Engine<B> {
                 let left = seconds_left(at, now);
                 if left < shown {
                     self.slots[i].run = Run::Arming { button, at, shown: left };
-                    self.say(MessageLevel::Info, countdown_text(left));
+                    self.say(i, MessageLevel::Info, countdown_text(left));
                 }
                 continue;
             }
             self.slots[i].run = Run::Stopped;
             if self.backend.pointer_on_hud() {
                 self.say(
+                    i,
                     MessageLevel::Warning,
                     "La souris était sur le HUD : rien n'a été enfoncé. Recommence en la plaçant ailleurs.",
                 );
@@ -370,7 +370,7 @@ impl<B: Backend> Engine<B> {
             self.capture = None;
             self.backend.stop_capture();
             let label = self.label(self.slots[index].hotkey);
-            self.say(MessageLevel::Info, format!("Aucune touche reçue : le raccourci reste {label}."));
+            self.say(index, MessageLevel::Info, format!("Aucune touche reçue : le raccourci reste {label}."));
         }
     }
 
@@ -441,11 +441,22 @@ impl<B: Backend> Engine<B> {
         self.notice.as_ref().map_or(1, |n| n.number + 1)
     }
 
-    fn say(&mut self, level: MessageLevel, text: impl Into<String>) {
-        let text = text.into();
-        crate::log::write(format!("Message ({level:?}) : {text}"));
+    /// Shows a message about macro `i`.
+    fn say(&mut self, i: usize, level: MessageLevel, text: impl Into<String>) {
+        let message = Message::new(level, text).concerning(self.slots[i].def.id);
+        self.show(message);
+    }
+
+    /// « Raccourci refusé » for macro `i`: `label` was refused, `text` says why and what stays.
+    fn refuse(&mut self, i: usize, label: &str, text: String) {
+        let message = Message::hotkey_refused(self.slots[i].def.id, label, text);
+        self.show(message);
+    }
+
+    fn show(&mut self, message: Message) {
+        crate::log::write(format!("Message ({:?}) : {}", message.level, message.text));
         let number = self.next_notice_number();
-        self.notice = Some(Notice { number, message: Some(Message::new(level, text)) });
+        self.notice = Some(Notice { number, message: Some(message) });
     }
 
     /// Takes the engine's current message away (the countdown it showed is over).
@@ -478,7 +489,7 @@ impl<B: Backend> Engine<B> {
         let slot = &self.slots[i];
         if let Some(reason) = &slot.unavailable {
             let text = format!("« {} » est indisponible : {reason}", slot.def.name);
-            self.say(MessageLevel::Warning, text);
+            self.say(i, MessageLevel::Warning, text);
             return;
         }
         if slot.run != Run::Stopped {
@@ -487,19 +498,19 @@ impl<B: Backend> Engine<B> {
         let MacroOptions::HoldClick { button } = slot.options;
         if let Some(other) = self.other_user_of(button, i) {
             let text = format!("{} est déjà maintenu par « {other} ».", capitalized(button.phrase()));
-            self.say(MessageLevel::Warning, text);
+            self.say(i, MessageLevel::Warning, text);
             return;
         }
         match trigger {
             Trigger::Hud => {
                 let seconds = HUD_START_DELAY.as_secs();
                 self.slots[i].run = Run::Arming { button, at: now + HUD_START_DELAY, shown: seconds };
-                self.say(MessageLevel::Info, countdown_text(seconds));
+                self.say(i, MessageLevel::Info, countdown_text(seconds));
             }
             Trigger::Hotkey => {
                 if self.backend.pointer_on_hud() {
                     let label = self.label(self.slots[i].hotkey);
-                    self.say(MessageLevel::Warning, format!("Sors la souris du HUD avant d'appuyer sur {label}."));
+                    self.say(i, MessageLevel::Warning, format!("Sors la souris du HUD avant d'appuyer sur {label}."));
                     return;
                 }
                 self.press_now(i, button);
@@ -511,12 +522,16 @@ impl<B: Backend> Engine<B> {
         self.slots[i].run = Run::Stopped;
         if let Some(other) = self.other_user_of(button, i) {
             let text = format!("{} est déjà maintenu par « {other} ».", capitalized(button.phrase()));
-            self.say(MessageLevel::Warning, text);
+            self.say(i, MessageLevel::Warning, text);
             return;
         }
         // The guard first: no button is ever down without a way for the user to take it back.
         if let Err(e) = self.backend.watch(self.held_buttons().with(button)) {
-            self.say(MessageLevel::Error, format!("Impossible de surveiller la souris ({e}) : rien n'a été enfoncé."));
+            self.say(
+                i,
+                MessageLevel::Error,
+                format!("Impossible de surveiller la souris ({e}) : rien n'a été enfoncé."),
+            );
             let _ = self.backend.watch(self.held_buttons());
             return;
         }
@@ -533,7 +548,7 @@ impl<B: Backend> Engine<B> {
             }
             Err(e) => {
                 let _ = self.backend.watch(self.held_buttons());
-                self.say(MessageLevel::Error, format!("Windows a refusé d'enfoncer {} ({e}).", button.phrase()));
+                self.say(i, MessageLevel::Error, format!("Windows a refusé d'enfoncer {} ({e}).", button.phrase()));
             }
         }
     }
@@ -556,6 +571,7 @@ impl<B: Backend> Engine<B> {
                         crate::log::write(format!("« {} » : {} relâché.", self.slots[i].def.name, button.phrase()))
                     }
                     Err(e) => self.say(
+                        i,
                         MessageLevel::Error,
                         format!(
                             "Windows a refusé de relâcher {} ({e}) : clique-le une fois pour le libérer.",
@@ -580,7 +596,7 @@ impl<B: Backend> Engine<B> {
                 if let Some(other) = self.other_user_of(button, i) {
                     self.slots[i].run = Run::Stopped;
                     let text = format!("{} est déjà maintenu par « {other} ».", capitalized(button.phrase()));
-                    self.say(MessageLevel::Warning, text);
+                    self.say(i, MessageLevel::Warning, text);
                 } else {
                     self.slots[i].run = Run::Arming { button, at, shown };
                 }
@@ -590,7 +606,7 @@ impl<B: Backend> Engine<B> {
                 self.stop_macro(i);
                 self.slots[i].options = options;
                 let name = self.slots[i].def.name;
-                self.say(MessageLevel::Info, format!("Bouton changé : « {name} » est arrêtée."));
+                self.say(i, MessageLevel::Info, format!("Bouton changé : « {name} » est arrêtée."));
             }
         }
     }
@@ -608,6 +624,7 @@ impl<B: Backend> Engine<B> {
             Err(e) => {
                 let label = self.label(self.slots[i].hotkey);
                 self.say(
+                    i,
                     MessageLevel::Error,
                     format!("Impossible d'écouter le clavier ({e}) : le raccourci reste {label}."),
                 );
@@ -630,7 +647,7 @@ impl<B: Backend> Engine<B> {
         match outcome {
             Outcome::Cancelled => {
                 let label = self.label(self.slots[capture.index].hotkey);
-                self.say(MessageLevel::Info, format!("Raccourci inchangé : {label}."));
+                self.say(capture.index, MessageLevel::Info, format!("Raccourci inchangé : {label}."));
             }
             Outcome::Chosen(hotkey) => self.change_hotkey(capture.index, hotkey),
         }
@@ -641,10 +658,10 @@ impl<B: Backend> Engine<B> {
         let label = self.label(hotkey);
         let current = self.label(self.slots[i].hotkey);
         let active = self.slots[i].registered.is_some();
-        let keep = if active { format!(" Le raccourci reste {current}.") } else { String::new() };
+        let keep = if active { format!(" {current} reste actif.") } else { String::new() };
 
         if hotkey == self.slots[i].hotkey && active {
-            self.say(MessageLevel::Info, format!("Raccourci inchangé : {label}."));
+            self.say(i, MessageLevel::Info, format!("Raccourci inchangé : {label}."));
             return;
         }
         let owner = self
@@ -654,29 +671,23 @@ impl<B: Backend> Engine<B> {
             .find(|(j, s)| *j != i && s.def.available && s.hotkey == hotkey)
             .map(|(_, s)| s.def.name);
         if let Some(other) = owner {
-            self.say(MessageLevel::Error, format!("{label} est déjà le raccourci de « {other} ».{keep}"));
+            self.refuse(i, &label, format!("{label} est déjà le raccourci de « {other} ».{keep}"));
             return;
         }
         if let Some(why) = hotkey::refusal(&hotkey, &label) {
-            self.say(MessageLevel::Error, format!("{why}{keep}"));
+            self.refuse(i, &label, format!("{why}{keep}"));
             return;
         }
         if let Some(c) = self.backend.altgr_char(hotkey) {
-            self.say(
-                MessageLevel::Error,
-                format!("{label} sert à écrire « {c} » (AltGr) sur ce clavier : choisis-en un autre.{keep}"),
-            );
+            self.refuse(i, &label, format!("{label} sert à écrire « {c} ».{keep}"));
             return;
         }
         match self.backend.register_hotkey(hotkey) {
             Err(RegisterError::Taken) => {
-                self.say(
-                    MessageLevel::Error,
-                    format!("{label} est déjà pris par Windows ou par un autre programme.{keep}"),
-                );
+                self.refuse(i, &label, format!("{label} est déjà pris par Windows ou un autre programme.{keep}"));
             }
             Err(RegisterError::Other(e)) => {
-                self.say(MessageLevel::Error, format!("Windows refuse le raccourci {label} ({e}).{keep}"));
+                self.refuse(i, &label, format!("Windows refuse {label} ({e}).{keep}"));
             }
             Ok(id) => {
                 if let Some(old) = self.slots[i].registered.replace(id) {
@@ -685,7 +696,7 @@ impl<B: Backend> Engine<B> {
                 self.slots[i].hotkey = hotkey;
                 self.slots[i].unavailable = None;
                 let name = self.slots[i].def.name;
-                self.say(MessageLevel::Info, format!("Nouveau raccourci de « {name} » : {label}."));
+                self.say(i, MessageLevel::Info, format!("Nouveau raccourci de « {name} » : {label}."));
             }
         }
     }
@@ -694,6 +705,7 @@ impl<B: Backend> Engine<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::MessageKind;
     use crate::hotkey::{Modifier, Modifiers, vk};
     use crate::macros::HOLD_CLICK;
     use MouseButton::*;
@@ -1134,9 +1146,17 @@ mod tests {
         let made = calls(&mut e);
         assert!(!made.iter().any(|c| matches!(c, Call::Unregister(_) | Call::Register(_))), "{made:?}");
         assert_eq!(e.snapshot().macros[0].hotkey, Hotkey::F8);
+        // « Raccourci refusé » (D-16): a warning about this macro, naming the refused key.
         let m = message(&e);
-        assert_eq!(m.level, MessageLevel::Error);
-        assert_eq!(m.text, "Ctrl+Alt+M est déjà pris par Windows ou par un autre programme. Le raccourci reste F8.");
+        assert_eq!(
+            m,
+            Message::hotkey_refused(
+                ID,
+                "Ctrl+Alt+M",
+                "Ctrl+Alt+M est déjà pris par Windows ou un autre programme. F8 reste actif."
+            )
+        );
+        assert_eq!(m.level, MessageLevel::Warning);
         press_hotkey(&mut e, now);
         assert_eq!(status(&e), MacroStatus::Active, "F8 still works");
     }
@@ -1155,7 +1175,8 @@ mod tests {
         e.command(Command::StartCapture(ID), now);
         e.event(captured(Outcome::Chosen(second.default_hotkey)), now);
         assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_))));
-        assert_eq!(message(&e).text, "F9 est déjà le raccourci de « Deuxième ». Le raccourci reste F8.");
+        assert_eq!(message(&e).text, "F9 est déjà le raccourci de « Deuxième ». F8 reste actif.");
+        assert_eq!(message(&e).kind, MessageKind::HotkeyRefused { key: "F9".into() });
         // Each macro toggles with its own hotkey; both can run at once on different buttons.
         press_hotkey(&mut e, now);
         let id2 = hotkey_id(&e, 1);
@@ -1197,17 +1218,25 @@ mod tests {
     fn hotkeys_breaking_typing_or_windows_are_refused() {
         let mut e = engine();
         let now = Instant::now();
-        for refused in [
-            Hotkey::new(Modifiers::NONE, vk::KEY_M),
-            Hotkey::new(Modifiers::NONE.with(Modifier::Alt), vk::F4),
-            Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::KEY_C),
+        for (refused, text) in [
+            (
+                Hotkey::new(Modifiers::NONE, vk::KEY_M),
+                "M empêcherait d'écrire (ajoute Ctrl, Alt ou Win). F8 reste actif.",
+            ),
+            (
+                Hotkey::new(Modifiers::NONE.with(Modifier::Alt), vk::TAB),
+                "Alt+Tab est déjà pris par Windows. F8 reste actif.",
+            ),
+            (Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::KEY_C), "Ctrl+C sert à copier. F8 reste actif."),
         ] {
             e.command(Command::StartCapture(ID), now);
             e.event(captured(Outcome::Chosen(refused)), now);
             assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_))));
             let m = message(&e);
-            assert_eq!(m.level, MessageLevel::Error);
-            assert!(m.text.ends_with("Le raccourci reste F8."), "{}", m.text);
+            assert_eq!(m.level, MessageLevel::Warning);
+            assert_eq!(m.text, text);
+            assert_eq!(m.about, Some(ID));
+            assert_eq!(m.kind, MessageKind::HotkeyRefused { key: refused.label(&|_| None) });
         }
     }
 
@@ -1272,7 +1301,7 @@ mod tests {
         // F8 is still taken: refused, without "le raccourci reste" since F8 does not work.
         e.command(Command::StartCapture(ID), now);
         e.event(captured(Outcome::Chosen(Hotkey::F8)), now);
-        assert_eq!(message(&e).text, "F8 est déjà pris par Windows ou par un autre programme.");
+        assert_eq!(message(&e).text, "F8 est déjà pris par Windows ou un autre programme.");
         // Another key: the macro becomes available.
         e.command(Command::StartCapture(ID), now);
         e.event(captured(Outcome::Chosen(Hotkey::new(Modifiers::NONE, vk::F9))), now);
@@ -1338,6 +1367,19 @@ mod tests {
         assert!(calls(&mut e).is_empty());
         assert_eq!(e.snapshot().macros[1].status, MacroStatus::Stopped);
         assert_eq!(e.snapshot().capturing, None);
+    }
+
+    #[test]
+    fn every_message_of_a_macro_says_so_and_only_refusals_are_refused() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::Start(ID), now);
+        assert_eq!(message(&e).about, Some(ID), "countdown");
+        assert_eq!(message(&e).kind, MessageKind::General);
+        e.command(Command::StartCapture(ID), now);
+        e.event(captured(Outcome::Chosen(Hotkey::new(Modifiers::NONE, vk::F9))), now);
+        let saved = message(&e);
+        assert_eq!((saved.level, saved.about, saved.kind), (MessageLevel::Info, Some(ID), MessageKind::General));
     }
 
     #[test]

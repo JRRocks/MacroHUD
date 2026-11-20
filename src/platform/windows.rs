@@ -23,7 +23,7 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -34,7 +34,8 @@ use windows_sys::Win32::Foundation::{
     INVALID_HANDLE_VALUE, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, MonitorFromRect,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+    MonitorFromRect, ScreenToClient,
 };
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 use windows_sys::Win32::System::Diagnostics::Debug::{EXCEPTION_POINTERS, SetUnhandledExceptionFilter};
@@ -51,13 +52,14 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     VK_RBUTTON, VK_RMENU, VK_RWIN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowRect, GetWindowThreadProcessId, HC_ACTION,
-    HHOOK, HOOKPROC, HWND_TOPMOST, IsIconic, IsWindowVisible, KBDLLHOOKSTRUCT, KillTimer, LLKHF_UP, MB_ICONERROR,
+    CallNextHookEx, GA_ROOT, GUITHREADINFO, GetAncestor, GetClassNameW, GetClientRect, GetCursorPos,
+    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowRect, GetWindowThreadProcessId, HC_ACTION, HHOOK,
+    HOOKPROC, HWND_TOPMOST, IsIconic, IsWindowVisible, KBDLLHOOKSTRUCT, KillTimer, LLKHF_UP, MB_ICONERROR,
     MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE, MessageBoxW,
-    MsgWaitForMultipleObjectsEx, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT,
+    MsgWaitForMultipleObjectsEx, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostMessageW, PostThreadMessageW, QS_ALLINPUT,
     SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowPos,
     SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_APP,
-    WM_HOTKEY, WM_QUIT, WM_TIMER,
+    WM_HOTKEY, WM_QUIT, WM_TIMER, WindowFromPoint,
 };
 
 use super::BoxKind;
@@ -65,7 +67,7 @@ use crate::capture::{KeyCapture, Outcome};
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
 use crate::engine::{Backend, Command, Engine, Event, HotkeyId, KeySource, MacroSetup, RegisterError, Snapshot};
-use crate::guard::{self, ButtonSet, Edge, MouseGuard, Source};
+use crate::guard::{self, ButtonSet, Edge, MouseGuard, ReleaseScene, Source};
 use crate::hotkey::{Hotkey, Modifiers, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
 
@@ -81,6 +83,11 @@ const HOOK_ANSWER_WAIT: Duration = Duration::from_secs(2);
 
 /// Buttons pressed by MacroHUD and not released yet (bits of [`ButtonSet`]).
 static HELD: AtomicU8 = AtomicU8::new(0);
+/// For each button (left, right, middle): the window that received its press (0: none known), so
+/// that it also gets the release, wherever the pointer is then (P1.8).
+static PRESS_WINDOW: [AtomicIsize; 3] = [const { AtomicIsize::new(0) }; 3];
+/// The HUD's window, to name it in the run log.
+static HUD_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Set by the panic hook: the hooks then let everything through untouched.
 static PANICKING: AtomicBool = AtomicBool::new(false);
 /// Keyboard events seen during the current capture, by the low-level hook and by the HUD's thread
@@ -150,36 +157,199 @@ fn inject(button: MouseButton, down: bool) -> Result<(), String> {
     if sent == 1 { Ok(()) } else { Err(format!("SendInput, erreur {}", last_error())) }
 }
 
+fn button_index(button: MouseButton) -> usize {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        MouseButton::Middle => 2,
+    }
+}
+
 fn press(button: MouseButton) -> Result<(), String> {
     let bit = ButtonSet::only(button).bits();
     // Recorded before the press: whatever happens next, the emergency release knows about it.
     HELD.fetch_or(bit, Ordering::SeqCst);
+    // The press goes to the window under the pointer (it is never the HUD: refused before).
+    let target = window_under_pointer();
+    PRESS_WINDOW[button_index(button)].store(target, Ordering::SeqCst);
     let result = inject(button, true);
     if result.is_err() {
         HELD.fetch_and(!bit, Ordering::SeqCst);
+        PRESS_WINDOW[button_index(button)].store(0, Ordering::SeqCst);
+    } else {
+        crate::log::write(format!("Appui du {} : fenêtre sous le curseur {}.", button_name(button), describe(target)));
     }
     result
 }
 
 fn adopt(button: MouseButton) {
     HELD.fetch_or(ButtonSet::only(button).bits(), Ordering::SeqCst);
+    // The user's own press went to the window that holds the capture now, or else to the one under
+    // the pointer.
+    let capture = capture_of(0);
+    let target = if capture != 0 { capture } else { window_under_pointer() };
+    PRESS_WINDOW[button_index(button)].store(target, Ordering::SeqCst);
+    crate::log::write(format!(
+        "{} déjà tenu à la main, repris : fenêtre de l'appui {}.",
+        capitalized_name(button),
+        describe(target)
+    ));
 }
 
 fn release(button: MouseButton) -> Result<(), String> {
-    let result = inject(button, false);
-    if result.is_ok() {
-        HELD.fetch_and(!ButtonSet::only(button).bits(), Ordering::SeqCst);
-    }
-    result
+    let index = button_index(button);
+    // Looked at before the release: the application lets the capture go once it gets it.
+    let scene = Scene::now(PRESS_WINDOW[index].load(Ordering::SeqCst));
+    inject(button, false)?;
+    HELD.fetch_and(!ButtonSet::only(button).bits(), Ordering::SeqCst);
+    PRESS_WINDOW[index].store(0, Ordering::SeqCst);
+    crate::log::write(scene.deliver(button));
+    Ok(())
 }
 
 /// Releases every button MacroHUD holds, from any thread; returns those it released.
 pub fn emergency_release() -> ButtonSet {
     let held = ButtonSet::from_bits(HELD.swap(0, Ordering::SeqCst));
+    // Here nothing comes before the releases, not even a look at the windows: it follows them, when
+    // the application has not had the time to handle its release yet (at worst it would get it
+    // twice). The run log only gets the line if writing needs no waiting (panic, crash).
     for button in held.iter() {
         let _ = inject(button, false);
     }
+    for button in held.iter() {
+        let press_window = PRESS_WINDOW[button_index(button)].swap(0, Ordering::SeqCst);
+        crate::log::write_now(Scene::now(press_window).deliver(button));
+    }
     held
+}
+
+/// Sends `button`'s release message to `window`, at the pointer's place brought back inside it.
+fn post_release(window: isize, button: MouseButton) -> Result<(), u32> {
+    let hwnd = window as HWND;
+    let mut point = POINT::default();
+    let mut client = RECT::default();
+    unsafe {
+        GetCursorPos(&mut point);
+        ScreenToClient(hwnd, &mut point);
+        GetClientRect(hwnd, &mut client);
+    }
+    let (x, y) = guard::point_inside(point.x, point.y, client.right, client.bottom);
+    // The buttons still down, without the one released (Windows may not have handled it yet).
+    let down = MouseButton::ALL
+        .into_iter()
+        .filter(|b| *b != button && key_down(button_vk(*b) as u16))
+        .fold(ButtonSet::EMPTY, ButtonSet::with);
+    let flags = guard::key_flags(down, key_down(VK_SHIFT), key_down(VK_CONTROL));
+    if unsafe { PostMessageW(hwnd, guard::release_message(button), flags, guard::pack_point(x, y)) } != 0 {
+        Ok(())
+    } else {
+        Err(last_error())
+    }
+}
+
+/// The windows involved in a release, for the decision and for the run log.
+struct Scene {
+    press: isize,
+    press_thread: u32,
+    pointer: isize,
+    capture: isize,
+    press_in_foreground: bool,
+    reaches: bool,
+}
+
+impl Scene {
+    fn now(press: isize) -> Scene {
+        let pointer = window_under_pointer();
+        let press_thread = thread_of(press);
+        let capture = if press_thread == 0 { 0 } else { capture_of(press_thread) };
+        let foreground = unsafe { GetForegroundWindow() } as isize;
+        let press_in_foreground = press_thread != 0 && thread_of(foreground) == press_thread;
+        let reaches = guard::release_reaches(&ReleaseScene {
+            press_thread,
+            pointer_thread: thread_of(pointer),
+            press_thread_captures: capture != 0,
+            press_thread_foreground: press_in_foreground,
+        });
+        Scene { press, press_thread, pointer, capture, press_in_foreground, reaches }
+    }
+
+    /// Once the button is released: sends the release to the press window when Windows does not
+    /// bring it there (P1.8, see [`guard::release_reaches`]); returns the run log's line.
+    fn deliver(&self, button: MouseButton) -> String {
+        let outcome = if self.press == 0 {
+            "fenêtre de l'appui inconnue".to_string()
+        } else if self.reaches {
+            "le relâchement lui parvient".to_string()
+        } else if thread_of(self.press) != self.press_thread {
+            // Closed meanwhile (its handle may even name another window now).
+            "fenêtre de l'appui fermée, rien à lui envoyer".to_string()
+        } else {
+            match post_release(self.press, button) {
+                Ok(()) => "relâchement envoyé aussi à la fenêtre de l'appui".to_string(),
+                Err(code) => format!("envoi à la fenêtre de l'appui refusé (erreur {code})"),
+            }
+        };
+        format!(
+            "Relâchement du {} : sous le curseur {} ; fenêtre de l'appui {}, capture de son fil : {}, au premier plan : {} → {outcome}.",
+            button_name(button),
+            describe(self.pointer),
+            describe(self.press),
+            describe(self.capture),
+            if self.press_in_foreground { "oui" } else { "non" },
+        )
+    }
+}
+
+/// The window under the pointer (the deepest child), 0 when there is none.
+fn window_under_pointer() -> isize {
+    let mut point = POINT::default();
+    if unsafe { GetCursorPos(&mut point) } == 0 {
+        return 0;
+    }
+    unsafe { WindowFromPoint(point) as isize }
+}
+
+fn thread_of(window: isize) -> u32 {
+    if window == 0 { 0 } else { unsafe { GetWindowThreadProcessId(window as HWND, null_mut()) } }
+}
+
+/// The window holding the mouse capture in a thread (0: the foreground thread); 0 when none.
+fn capture_of(thread: u32) -> isize {
+    let mut info = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+    if unsafe { GetGUIThreadInfo(thread, &mut info) } == 0 {
+        return 0;
+    }
+    info.hwndCapture as isize
+}
+
+/// A window for the run log: handle, class (never its title, which may be private), thread.
+fn describe(window: isize) -> String {
+    if window == 0 {
+        return "aucune".to_string();
+    }
+    let mut class = [0u16; 128];
+    let length = unsafe { GetClassNameW(window as HWND, class.as_mut_ptr(), class.len() as i32) };
+    let class = String::from_utf16_lossy(&class[..usize::try_from(length).unwrap_or(0)]);
+    let root = unsafe { GetAncestor(window as HWND, GA_ROOT) } as isize;
+    let hud = HUD_WINDOW.load(Ordering::Relaxed);
+    let mark = if hud != 0 && root == hud { " (le HUD)" } else { "" };
+    format!("{window:#x} « {class} »{mark}, fil {}", thread_of(window))
+}
+
+fn button_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "bouton gauche",
+        MouseButton::Right => "bouton droit",
+        MouseButton::Middle => "bouton du milieu",
+    }
+}
+
+fn capitalized_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "Bouton gauche",
+        MouseButton::Right => "Bouton droit",
+        MouseButton::Middle => "Bouton du milieu",
+    }
 }
 
 /// Called by the panic hook: the hooks stop interfering with the mouse and keyboard.
@@ -679,6 +849,7 @@ pub fn spawn_engine(
     hud: Option<isize>,
     repaint: Box<dyn Fn() + Send>,
 ) -> Result<EngineHandle, String> {
+    HUD_WINDOW.store(hud.unwrap_or(0), Ordering::Relaxed);
     let (sender, receiver) = mpsc::channel::<Input>();
     let (ready_sender, ready) = mpsc::sync_channel::<u32>(1);
     let shared = Arc::new(Mutex::new(Snapshot::default()));
@@ -1053,6 +1224,17 @@ mod tests {
         assert_eq!(guard::msg::WM_MBUTTONUP, w::WM_MBUTTONUP);
         assert_eq!(guard::msg::LLMHF_INJECTED, w::LLMHF_INJECTED);
         assert_eq!(guard::msg::LLMHF_LOWER_IL_INJECTED, w::LLMHF_LOWER_IL_INJECTED);
+    }
+
+    /// The windows looked at during a release can be named, and a missing one says so.
+    #[test]
+    fn release_scenes_can_be_described() {
+        assert_eq!(describe(0), "aucune");
+        let scene = Scene::now(0);
+        assert!(scene.reaches, "no press window: nothing to send");
+        let line = scene.deliver(MouseButton::Right);
+        assert!(line.starts_with("Relâchement du bouton droit : sous le curseur "), "{line}");
+        assert!(line.ends_with("fenêtre de l'appui inconnue."), "{line}");
     }
 
     /// The key codes of `hotkey` (tested on Linux) are the real Windows ones.

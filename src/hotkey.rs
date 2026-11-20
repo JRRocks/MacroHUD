@@ -316,52 +316,58 @@ fn types_text(key: Vk) -> bool {
     ) || is_layout_key(key)
 }
 
+/// What an existing combination is already used for.
+enum Taken {
+    /// Windows itself.
+    ByWindows,
+    /// Nearly every application, for this.
+    For(&'static str),
+}
+
 /// Combinations that Windows or nearly every application already uses.
-fn reserved_use(hotkey: &Hotkey) -> Option<&'static str> {
+fn already_used(hotkey: &Hotkey) -> Option<Taken> {
     let m = hotkey.modifiers;
     let ctrl_only = m == Modifiers::NONE.with(Modifier::Ctrl);
     let alt_only = m == Modifiers::NONE.with(Modifier::Alt);
     let alt_shift = m == Modifiers::NONE.with(Modifier::Alt).with(Modifier::Shift);
     match hotkey.key {
-        vk::F4 if alt_only => Some("fermer les fenêtres"),
-        vk::TAB if alt_only || alt_shift => Some("passer d'une fenêtre à l'autre"),
-        vk::SPACE if alt_only => Some("ouvrir le menu des fenêtres"),
-        vk::KEY_C if ctrl_only => Some("copier"),
-        vk::KEY_X if ctrl_only => Some("couper"),
-        vk::KEY_V if ctrl_only => Some("coller"),
-        vk::KEY_Z if ctrl_only => Some("annuler"),
-        vk::KEY_Y if ctrl_only => Some("rétablir"),
-        vk::KEY_A if ctrl_only => Some("tout sélectionner"),
-        vk::KEY_S if ctrl_only => Some("enregistrer"),
+        vk::F4 | vk::SPACE if alt_only => Some(Taken::ByWindows),
+        vk::TAB if alt_only || alt_shift => Some(Taken::ByWindows),
+        vk::KEY_C if ctrl_only => Some(Taken::For("copier")),
+        vk::KEY_X if ctrl_only => Some(Taken::For("couper")),
+        vk::KEY_V if ctrl_only => Some(Taken::For("coller")),
+        vk::KEY_Z if ctrl_only => Some(Taken::For("annuler")),
+        vk::KEY_Y if ctrl_only => Some(Taken::For("rétablir")),
+        vk::KEY_A if ctrl_only => Some(Taken::For("tout sélectionner")),
+        vk::KEY_S if ctrl_only => Some(Taken::For("enregistrer")),
         _ => None,
     }
 }
 
-/// Why `hotkey` cannot be used as a hotkey, as a French sentence; `None` when it can.
-/// `label` is its text (see [`Hotkey::label`]).
+/// Why `hotkey` cannot be used as a hotkey, as a short French sentence on the model of the mock-up
+/// (« Alt+Tab est déjà pris par Windows. »); `None` when it can. `label` is its text
+/// (see [`Hotkey::label`]).
 pub fn refusal(hotkey: &Hotkey, label: &str) -> Option<String> {
     let key = hotkey.key;
     if key == 0 || key > 0xFE || modifier_of(key).is_some() || (vk::LBUTTON..=vk::XBUTTON2).contains(&key) {
-        return Some("Choisis une touche, en plus de Ctrl, Alt, Maj ou Win.".into());
+        return Some("Il faut une touche en plus de Ctrl, Alt, Maj ou Win.".into());
     }
     if key == vk::ESCAPE {
-        return Some("Échap sert à annuler : choisis une autre touche.".into());
+        return Some("Échap sert à annuler.".into());
     }
     if key == vk::PACKET || key == vk::PROCESSKEY {
         return Some("Cette touche ne peut pas servir de raccourci.".into());
     }
     if key == vk::F12 && hotkey.modifiers == Modifiers::NONE {
-        return Some(
-            "F12 seule est réservée par Windows : ajoute Ctrl, Alt, Maj ou Win, ou choisis une autre touche.".into(),
-        );
+        return Some("F12 seule est réservée par Windows.".into());
     }
-    if let Some(usage) = reserved_use(hotkey) {
-        return Some(format!("{label} sert déjà à {usage} partout : choisis-en un autre."));
+    match already_used(hotkey) {
+        Some(Taken::ByWindows) => return Some(format!("{label} est déjà pris par Windows.")),
+        Some(Taken::For(usage)) => return Some(format!("{label} sert à {usage}.")),
+        None => {}
     }
     if types_text(key) && !hotkey.modifiers.has_command() {
-        return Some(format!(
-            "{label} empêcherait d'écrire : ajoute Ctrl, Alt ou Win, ou choisis une touche de F1 à F24."
-        ));
+        return Some(format!("{label} empêcherait d'écrire (ajoute Ctrl, Alt ou Win)."));
     }
     None
 }
@@ -472,7 +478,7 @@ mod tests {
         assert!(!refused(hk(ctrl().with(Modifier::Alt), vk::KEY_M)));
         assert!(!refused(hk(Modifiers::NONE.with(Modifier::Win), vk::KEY_M)));
         let text = refusal(&hk(Modifiers::NONE, vk::KEY_M), "M").unwrap();
-        assert!(text.starts_with("M empêcherait d'écrire"), "{text}");
+        assert_eq!(text, "M empêcherait d'écrire (ajoute Ctrl, Alt ou Win).");
     }
 
     #[test]
@@ -493,7 +499,9 @@ mod tests {
         assert!(refused(hk(ctrl(), vk::LCONTROL)));
         assert!(refused(hk(Modifiers::NONE, 0)));
         assert!(refused(hk(Modifiers::NONE, vk::LBUTTON)));
-        let text = refusal(&hk(alt, vk::F4), "Alt+F4").unwrap();
-        assert_eq!(text, "Alt+F4 sert déjà à fermer les fenêtres partout : choisis-en un autre.");
+        assert_eq!(refusal(&hk(alt, vk::F4), "Alt+F4").unwrap(), "Alt+F4 est déjà pris par Windows.");
+        assert_eq!(refusal(&hk(alt, vk::TAB), "Alt+Tab").unwrap(), "Alt+Tab est déjà pris par Windows.");
+        assert_eq!(refusal(&hk(ctrl(), vk::KEY_C), "Ctrl+C").unwrap(), "Ctrl+C sert à copier.");
+        assert_eq!(refusal(&hk(Modifiers::NONE, vk::F12), "F12").unwrap(), "F12 seule est réservée par Windows.");
     }
 }
