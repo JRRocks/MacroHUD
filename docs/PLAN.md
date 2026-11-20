@@ -7,7 +7,8 @@
 ## But
 
 MacroHUD automatise le clavier et la souris sur le PC Windows, piloté par un petit HUD. Première
-macro : maintenir un bouton de la souris enfoncé (D-04).
+macro : maintenir un bouton de la souris enfoncé (D-04). Deuxième macro : « Multi-clic », des clics
+répétés à la rapidité choisie (D-18).
 
 ## Tâches
 
@@ -17,11 +18,16 @@ macro : maintenir un bouton de la souris enfoncé (D-04).
 | P1.2 | Moteur « Maintenir le clic » : enfoncer, garder, relâcher ; bouton au choix ; clic physique = arrêt ; relâche à la fermeture et au plantage | programmation | Dans Paint, F8 trace comme si le bouton était tenu ; F8 ou un clic arrête | 🖥️ reste le vrai clic (R3) |
 | P1.3 | Raccourcis : un par macro, F8 par défaut, modifiable, refus d'un raccourci déjà pris, réglages gardés | programmation | Changer le raccourci, relancer : le nouveau marche, l'ancien non | ✅ |
 | P1.4 | Maquettes du HUD : cinq variantes | visuel | L'utilisateur en choisit une | ✅ |
-| P1.5 | HUD validé codé (au-dessus des fenêtres, déplaçable, état, raccourci et options de chaque macro, version) | visuel | Le HUD ressemble à la maquette choisie | 🔄 écarts : P1.9 |
+| P1.5 | HUD validé codé (au-dessus des fenêtres, déplaçable, état, raccourci et options de chaque macro, version) | visuel | Le HUD ressemble à la maquette choisie | 🖥️ écarts corrigés (P1.9) |
 | P1.6 | Test sur le PC du travail des sessions cloud, point par point | test | Rapport de la session test sans échec | ✅ passage 2 |
 | P1.7 | Première livraison : exécutable sur les Releases, miroir Drive | maître | L'utilisateur lance MacroHUD et garde un clic enfoncé avec F8 | 🖥️ v0.1.10 publiée |
 | P1.8 | Relâchement reçu par l'application qui a reçu l'appui, quel que soit l'arrêt : clic sur le HUD, « Quitter », Alt+F4, changement de bouton, plantage (D-15) | programmation | Maintien droit commencé sur une fenêtre, clic sur le HUD : la fenêtre reçoit le relâchement, comme avec F8 | 🖥️ R24 |
-| P1.9 | HUD conforme à la variante 2 (D-16) : « Active · gauche enfoncé » ; encadré ambre « Raccourci refusé », triangle, texte court, bouton « Choisir une autre touche » ; aucun liseré autour de la fenêtre | programmation (contrat, textes) puis visuel | Le vrai HUD et `maquettes/variante-2.png` ne diffèrent plus que par la version et le nombre de macros | 🔄 contrat et textes faits (R25), liseré retiré (R26) ; reste le visuel |
+| P1.9 | HUD conforme à la variante 2 (D-16) : « Active · gauche enfoncé » ; encadré ambre « Raccourci refusé », triangle, texte court, bouton « Choisir une autre touche » ; aucun liseré autour de la fenêtre | programmation (contrat, textes) puis visuel | Le vrai HUD et `maquettes/variante-2.png` ne diffèrent plus que par la version et le nombre de macros | 🖥️ contrat, textes, encadré ambre et liseré faits : R25, R26 et comparaison à la maquette (passage 3) |
+| P2.1 | Moteur « Multi-clic » (D-18 à D-22) : clics répétés à la rapidité réglée, là où est la souris ; arrêt par la touche, par un vrai clic du même bouton ou par le HUD ; une macro à la fois ; aucun clic sur le HUD ; jamais de bouton coincé (arrêt, fermeture, plantage) ; journal des démarrages et des arrêts | programmation | Sur la fenêtre d'essai, 10 clics/s pendant 10 s donnent 100 clics, à 5 % près ; F8 pendant le multi-clic l'arrête et lance le maintien | ⬜ |
+| P2.2 | Aperçu du HUD avec « Multi-clic » (page sans script) : le HUD actuel, puis le HUD à deux macros en variantes A, B, C du réglage de la rapidité, rendues avec egui | visuel | L'utilisateur choisit une variante | ⬜ |
+| P2.3 | HUD de « Multi-clic » codé selon la variante choisie ; rendu réel placé à côté de l'aperçu | visuel | Le rendu du HUD et la variante choisie ne diffèrent pas | ⬜ |
+| P2.4 | Test sur le PC, passage 3 : corrections (R24 à R26), « Multi-clic » (R27 à R34), reprise des points du passage 2 | test | Rapport sans échec | ⬜ |
+| P2.5 | Livraison (D-21) : nouvelle version sur les Releases avec les corrections et « Multi-clic », miroir Drive, exécutable posé dans le dossier d'applications de l'utilisateur | maître | L'utilisateur lance la nouvelle version et règle la rapidité | ⬜ |
 
 ## À vérifier sur le PC
 
@@ -57,3 +63,11 @@ macro : maintenir un bouton de la souris enfoncé (D-04).
 | R24 | — | Maintien commencé sur la fenêtre d'essai, du bouton gauche, puis droit, puis du milieu ; l'arrêter de chaque façon : F8 la souris sur la fenêtre, F8 la souris sur le HUD, clic sur le HUD (« Arrêter », « Quitter », choix d'un autre bouton), Alt+F4 sur le HUD, F8 la souris sur le HUD après un lancement avec `--essai-plantage` ; puis de même dans Paint | À chaque arrêt, la fenêtre reçoit exactement un relâchement ; `macrohud.log` a, pour chaque appui, une ligne « Appui du … » et, pour chaque arrêt, une ligne « Relâchement du … » qui dit la fenêtre sous le curseur, si l'application de l'appui tenait la capture de la souris, si elle était au premier plan, et si MacroHUD lui a envoyé le relâchement | à essayer |
 | R25 | — | « Changer », puis Ctrl+C ; « Changer », puis Alt+Tab ; « Changer », puis AltGr+E (clavier AZERTY) | Avertissement court qui dit la touche refusée et le raccourci qui reste : « Ctrl+C sert à copier. F8 reste actif. », « Alt+Tab est déjà pris par Windows. F8 reste actif. », « Ctrl+Alt+E sert à écrire « € ». F8 reste actif. » (l'encadré ambre « Raccourci refusé » et son bouton viennent ensuite de la session « visuel ») | à essayer |
 | R26 | — | Lancer MacroHUD sur un bureau clair (fond blanc), regarder de près les bords et les coins du HUD, déplié puis replié ; puis au-dessus d'un jeu | Aucune ombre, aucun liseré, rien d'assombri autour du HUD ; hors de la forme arrondie, les coins laissent voir le bureau (ni gris ni noir) ; `macrohud.log` : « Fenêtre du HUD : ombre de Windows : retirée ; bordure de Windows 11 : retirée ; coins arrondis par Windows : non ; zone dessinée par le HUD : toute la fenêtre. » | à essayer |
+| R27 | — | La souris posée sur la fenêtre d'essai (puis sur la toile de Paint), F9 ; puis F9 | Des clics répétés là où est la souris, à la rapidité affichée (à 10 clics/s : 100 clics en 10 s, à 5 % près) ; le HUD montre « Multi-clic » active, puis arrêtée ; rien ne reste enfoncé | à essayer |
+| R28 | — | Pendant le multi-clic, régler la rapidité à 1, puis à 15 clics/s ; quitter, relancer | La cadence suit dès le clic suivant ; la rapidité choisie revient après la relance | à essayer |
+| R29 | — | Pendant le multi-clic du bouton gauche : un vrai clic gauche ; réactiver, puis un vrai clic droit | Le clic gauche arrête la macro et n'arrive pas à l'application ; le clic droit passe normalement et les clics continuent | toi (vrai clic) |
+| R30 | — | Pendant le multi-clic : F8 ; puis, pendant le maintien : F9 | F8 arrête le multi-clic et lance le maintien ; F9 relâche le bouton maintenu et lance le multi-clic ; jamais les deux à la fois | à essayer |
+| R31 | — | Pendant le multi-clic, amener la souris sur le HUD, puis la ressortir ; macro arrêtée, F9 la souris sur le HUD | Aucun clic n'atteint le HUD et les clics reprennent dehors ; F9 sur le HUD n'active rien et un message demande de sortir la souris du HUD | à essayer |
+| R32 | — | « Activer » sur la ligne « Multi-clic », puis la souris sur la fenêtre d'essai avant 3 s | Décompte « Activation dans 3 s… », puis les clics commencent là où est la souris | à essayer |
+| R33 | — | Pendant le multi-clic : « Arrêter » ou « Quitter » dans le HUD, Alt+F4 sur le HUD ; puis lancement avec `--essai-plantage` et arrêt du multi-clic | À chaque arrêt, plus aucun clic et aucun bouton enfoncé ; le premier clic sur le HUD arrête, le second agit ; Alt+F4 et le second clic sur « Quitter » ferment MacroHUD ; plantage : boîte « MacroHUD : plantage » et rapport écrit | à essayer |
+| R34 | — | Dans un jeu en fenêtre sans bordure | Les clics répétés agissent dans le jeu, à la rapidité choisie ; le HUD reste visible | toi |

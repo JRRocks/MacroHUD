@@ -21,6 +21,31 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Cadrage de « Multi-clic », la deuxième macro
+
+- **Session** : maître
+- **Branche et commit** : `integration/passage-3`, commit de documentation par-dessus `2e91a53`
+  (`[skip ci]` : aucune exécution de la CI pour de la documentation seule).
+- **Objectif** : cadrer la demande « Rajoute maintenant la fonction multi clic continue avec choix de
+  la rapidité ».
+- **Réalisé** :
+  - Retour de l'utilisateur sur la 0.1.10 : « J'ai testé, fonctionnel », sans détail des points ;
+    R3 (vrai clic), R4 (jeu) et R20 (échelle d'affichage) restent à confirmer.
+  - Cadrage en quatre questions. Q1 (plage de rapidité) : réponse libre, « plage humainement
+    possible », chiffrée à 1–15 clics par seconde ; Q2 : un vrai clic arrête, comme le maintien ;
+    Q3 : une macro à la fois ; Q4 : les corrections prêtes partent avec le multi-clic.
+  - Contrat du HUD complété (ajouts datés) : options et rapidité de « Multi-clic », suspension des
+    clics quand la souris est sur le HUD, une macro à la fois, F9.
+  - Plan : tâches P2.1 à P2.5 ; points à vérifier R27 à R34 ; P1.5 et P1.9 passés à « à vérifier sur
+    le PC » (correctifs réunis sur `integration/passage-3`).
+- **Décisions** : D-18 à D-21 (utilisateur), D-22 (développeur : chiffres et règles de détail).
+- **Vérifications** : contrôle « dépôt public » des fichiers prêts à committer avant le commit.
+- **Non vérifié sur le PC** : R24 à R34, au passage 3 (D-21).
+- **Problèmes et dette** : la plage « humainement possible » est chiffrée par le développeur
+  (1 à 15 clics/s) ; l'aperçu la montre, l'utilisateur peut la corriger à ce moment-là.
+- **Prochaine étape** : la session « programmation » code le moteur (P2.1) ; la session « visuel »
+  prépare l'aperçu (P2.2), que l'utilisateur choisit avant tout code du HUD (P2.3).
+
 ## 2026-11-20 · Correctif 3 : plus de liseré autour du HUD
 
 - **Session** : programmation
