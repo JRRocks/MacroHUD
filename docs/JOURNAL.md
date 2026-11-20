@@ -59,6 +59,9 @@ Gabarit :
   bouton cliqué ou d'un autre) ; un vrai clic du bouton cliqué hors du HUD arrête et est consommé ;
   le relâchement de l'utilisateur passe toujours ; le moteur dit à la surveillance « maintenu » ou
   « cliqué », et ce que le HUD demande pendant les clics agit tout de suite.
+  - CI, exécution n° 25 (commit `8be389c`, le code de D-27) : tout vert. Windows : clippy ; 138
+    tests ; compilation release ; `MacroHUD.0.1.25.exe --version` répond « MacroHUD 0.1.25 ». Le
+    commit de fin qui suit refait tout et donne l'exécutable à essayer.
 - **Non vérifié sur le PC** : R28, R29, R31, R33 ; le glisser hors du HUD (avec le curseur de P2.3,
   ou en déplaçant le HUD par sa barre).
 - **Prochaine étape** : réunion avec la piste A de la session « visuel » sur `integration/passage-3` ;
