@@ -21,6 +21,27 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Passage 3 sur le PC : « Multi-clic » juste, deux défauts anciens restants
+
+- **Session** : maître
+- **Branche et commit** : `integration/passage-3` (`65d28bc`), exécutable d'essai `MacroHUD.0.1.29`
+  (CI n° 29 verte).
+- **Objectif** : faire vérifier sur le PC les corrections P1.8, P1.9 et « Multi-clic » (P2.4), à la
+  demande de l'utilisateur (« Lance le test maintenant »).
+- **Réalisé** :
+  - Halte confirmée par les quatre autres sessions Claude du PC (D-14), reprise envoyée après.
+  - Passage 3 par la session « test » : 19 OK, 2 échecs partiels, 2 non vérifiables (R29 vrai clic,
+    R34 jeu). Tout « Multi-clic » (R27, R28, R30 à R33) est OK, cadence comprise. Rapport gardé
+    hors du dépôt (`essais-prives/passage-3/`).
+  - Défaut 1 (R24) : quand la fenêtre de l'appui tient la capture de la souris sans être au premier
+    plan (cas fréquent après un clic sur le HUD), elle reçoit deux relâchements à l'arrêt.
+  - Défaut 2 (R25) : après « Changer », Alt+Tab avec le HUD au premier plan n'est pas refusé :
+    Windows change de fenêtre et la capture finit sans touche.
+  - Remarque : la boîte de plantage dit « maintenu » aussi pour « Multi-clic ».
+- **Décisions** : aucune ; rien n'est livré tant que les défauts restent (règle de livraison).
+- **Prochaine étape** : choix de l'utilisateur : corriger les deux défauts puis refaire le test, ou
+  livrer tel quel.
+
 ## 2026-11-20 · « Multi-clic » dans le HUD : la piste A codée
 
 - **Session** : visuel
