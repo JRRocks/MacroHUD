@@ -61,6 +61,9 @@ pub struct Loaded {
     pub settings: Settings,
     /// What went wrong, for the HUD (French); `None` when the file was fine or absent.
     pub warning: Option<String>,
+    /// The file was damaged: write the corrected settings at once, so the warning does not come
+    /// back at every start. (Not when it could not be read at all: it might be fine, only locked.)
+    pub rewrite: bool,
 }
 
 /// Reads the settings from `dir`. Never fails: defaults replace whatever cannot be read.
@@ -69,16 +72,20 @@ pub fn load(dir: &Path, catalog: &[MacroDef], stamp: &str) -> Loaded {
     let path = dir.join(FILE_NAME);
     let defaults = || Settings::defaults(catalog);
     match std::fs::read(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Loaded { settings: defaults(), warning: None },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Loaded { settings: defaults(), warning: None, rewrite: false }
+        }
         Err(e) => Loaded {
             settings: defaults(),
             warning: Some(format!("Réglages illisibles ({e}) : valeurs par défaut pour cette fois.")),
+            rewrite: false,
         },
         Ok(bytes) => match parse(&bytes, catalog) {
-            Ok((settings, true)) => Loaded { settings, warning: None },
+            Ok((settings, true)) => Loaded { settings, warning: None, rewrite: false },
             Ok((settings, false)) => Loaded {
                 settings,
                 warning: Some("Certains réglages étaient abîmés : ils reprennent leur valeur par défaut.".into()),
+                rewrite: true,
             },
             Err(()) => {
                 let warning = match keep_aside(&path, stamp) {
@@ -87,7 +94,7 @@ pub fn load(dir: &Path, catalog: &[MacroDef], stamp: &str) -> Loaded {
                     }
                     Err(_) => "Réglages abîmés : valeurs par défaut.".to_string(),
                 };
-                Loaded { settings: defaults(), warning: Some(warning) }
+                Loaded { settings: defaults(), warning: Some(warning), rewrite: true }
             }
         },
     }
@@ -291,7 +298,7 @@ mod tests {
     fn a_missing_file_gives_defaults_silently() {
         let dir = temp_dir("absent");
         let loaded = load(&dir, CATALOG, "x");
-        assert_eq!(loaded, Loaded { settings: Settings::defaults(CATALOG), warning: None });
+        assert_eq!(loaded, Loaded { settings: Settings::defaults(CATALOG), warning: None, rewrite: false });
     }
 
     #[test]
@@ -308,7 +315,7 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("\"label\": \"Ctrl+Alt+M\""), "{text}");
         let loaded = load(&dir, CATALOG, "x");
-        assert_eq!(loaded, Loaded { settings: s, warning: None });
+        assert_eq!(loaded, Loaded { settings: s, warning: None, rewrite: false });
     }
 
     #[test]
@@ -321,6 +328,7 @@ mod tests {
         assert!(warning.contains("reglages.abime-2026-11-20_14-35-12.json"), "{warning}");
         assert!(dir.join("reglages.abime-2026-11-20_14-35-12.json").exists());
         assert!(!dir.join(FILE_NAME).exists());
+        assert!(loaded.rewrite);
     }
 
     #[test]

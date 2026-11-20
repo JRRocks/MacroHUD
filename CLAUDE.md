@@ -32,9 +32,18 @@ Sessions cloud : chacune sur sa branche `claude/…`, jamais de pull request, ja
 ```bash
 cargo test                # vérifier la logique (tourne aussi sous Linux)
 cargo build --release     # compiler l'exécutable (sur Windows ou dans la CI)
+cargo fmt --check                                                          # mise en forme
+cargo clippy --all-targets -- -D warnings                                  # avertissements = erreurs
+cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings  # code Windows, depuis Linux
+cargo run                 # le HUD sous Linux, souris et clavier simulés (pour la session « visuel »)
 ```
 
-(À compléter par la session « programmation ».)
+- Options de l'exécutable : `--version`, `--aide`, `--essai-plantage` (essais sur le PC : plante
+  exprès quand on arrête un maintien, pour vérifier que le bouton est relâché et le rapport écrit).
+- Le HUD : `src/hud/` (session « visuel » ; son interface avec le reste est décrite en tête de
+  `src/hud/mod.rs`). Ce qu'il reçoit et demande : `src/contract.rs`, traduction de `docs/CONTRAT-HUD.md`.
+- Sur le PC, `%APPDATA%\MacroHUD\` : `reglages.json`, `macrohud.log` (journal d'exécution ; celui
+  du lancement précédent : `macrohud.precedent.log`), `plantages\` (rapports de plantage datés).
 
 ## Livraison
 
@@ -42,6 +51,12 @@ cargo build --release     # compiler l'exécutable (sur Windows ou dans la CI)
   exécutable), produit par la CI à chaque push sur `main`, tests passés d'abord.
 - Version : monte toute seule à chaque compilation de la CI ; jamais deux livraisons au même numéro.
   Affichée dans le HUD et par `macrohud --version`.
+- Version = `0.1.<numéro d'exécution de la CI>` (aussi dans les propriétés du fichier) ; une
+  compilation locale dit `0.1.0-dev`. Ne pas renommer `.github/workflows/ci.yml` : les numéros
+  repartiraient de 1.
+- À chaque push sur n'importe quelle branche, la CI teste puis compile ; `MacroHUD.<version>.exe` est
+  alors un artefact de l'exécution (onglet Actions) : c'est lui que la session « test » essaie avant
+  une fusion. Sur `main` seulement, et seulement si tout est passé : Release `v<version>`.
 - Mise à jour : remplacer l'exécutable ; les réglages restent dans `%APPDATA%\MacroHUD`.
 - Signature : aucune (Windows SmartScreen peut avertir au premier lancement).
 - Dépôt : **public** ; `main` ne reçoit que les fusions de la session maître, après le test local

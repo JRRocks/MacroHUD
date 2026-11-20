@@ -60,7 +60,7 @@ use super::BoxKind;
 use crate::capture::KeyCapture;
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
-use crate::engine::{Backend, Engine, Event, HotkeyId, MacroSetup, RegisterError, Snapshot};
+use crate::engine::{Backend, Command, Engine, Event, HotkeyId, MacroSetup, RegisterError, Snapshot};
 use crate::guard::{self, ButtonSet, MouseGuard};
 use crate::hotkey::{Hotkey, Modifiers, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
@@ -704,6 +704,7 @@ fn engine_main(
         while unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             match msg.message {
                 WM_HOTKEY => {
+                    crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
                     engine.event(Event::Hotkey(msg.wParam as HotkeyId), Instant::now());
                     raise = true;
                 }
@@ -713,7 +714,12 @@ fn engine_main(
         }
         loop {
             match inputs.try_recv() {
-                Ok(Input::Command(command)) => engine.command(command, Instant::now()),
+                Ok(Input::Command(command)) => {
+                    if matches!(command, Command::Stop(_)) {
+                        crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
+                    }
+                    engine.command(command, Instant::now());
+                }
                 Ok(Input::Event(event)) => {
                     raise |= matches!(event, Event::PhysicalClick(_));
                     engine.event(event, Instant::now());

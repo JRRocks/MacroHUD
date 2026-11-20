@@ -10,6 +10,7 @@
 
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
@@ -18,6 +19,22 @@ use crate::platform::{self, BoxKind};
 
 /// Folder of the reports, inside the settings folder.
 pub const FOLDER: &str = "plantages";
+
+/// `macrohud --essai-plantage`: MacroHUD crashes on purpose when asked to stop a macro that holds a
+/// button, so that the PC test can check the crash path for real (button released, report, message).
+static CRASH_TEST: AtomicBool = AtomicBool::new(false);
+
+pub fn arm_crash_test() {
+    CRASH_TEST.store(true, Ordering::SeqCst);
+}
+
+/// Crashes on purpose if the crash test is armed and a button is held (called where a macro stops).
+pub fn crash_test_point(held: ButtonSet) {
+    if CRASH_TEST.load(Ordering::SeqCst) && !held.is_empty() {
+        let buttons: Vec<&str> = held.iter().map(MouseButton::phrase).collect();
+        panic!("plantage d'essai (--essai-plantage), pendant que {} était maintenu", buttons.join(" et "));
+    }
+}
 
 /// Installs the panic hook and the crash filter.
 pub fn install(settings_dir: PathBuf) {

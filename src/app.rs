@@ -422,6 +422,36 @@ mod tests {
         Message::new(MessageLevel::Warning, text)
     }
 
+    /// Runs a few frames of the HUD without a window, at its own window size; returns its actions.
+    fn hud_frames(state: &HudState) -> Vec<HudAction> {
+        let ctx = egui::Context::default();
+        hud::setup(&ctx);
+        let size = hud::window_size(state);
+        let mut actions = Vec::new();
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| actions.extend(hud::draw(ui, state)));
+            // No renderer here: the font textures egui wanted to upload are dropped on purpose.
+            output.textures_delta.clear();
+        }
+        actions
+    }
+
+    /// Whatever HUD `src/hud/` holds (the debug one or the validated one): it draws every situation
+    /// of the contract, at a usable size, and asks nothing by itself.
+    #[test]
+    fn the_hud_draws_every_sample_state_without_asking_anything() {
+        for (name, state) in crate::contract::samples() {
+            let size = hud::window_size(&state);
+            assert!(size.x >= 1.0 && size.y >= 1.0, "{name}: size {size:?}");
+            assert!(hud_frames(&state).is_empty(), "{name}: actions without any input");
+        }
+        assert!(hud::MESSAGE_DURATION >= Duration::from_secs(1));
+    }
+
     #[test]
     fn windows_are_kept_inside_the_screen() {
         let area = (0, 0, 1920, 1040);

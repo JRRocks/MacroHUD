@@ -159,30 +159,8 @@ mod tests {
     use super::*;
     use crate::contract::samples;
 
-    /// Runs one frame of the HUD without a window, at its own window size.
-    fn frame(state: &HudState) -> Vec<HudAction> {
-        let ctx = egui::Context::default();
-        setup(&ctx);
-        let size = window_size(state);
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-            ..Default::default()
-        };
-        let mut actions = Vec::new();
-        let mut output = ctx.run_ui(input, |ui| actions = draw(ui, state));
-        // No renderer here: the font textures egui wanted to upload are dropped on purpose.
-        output.textures_delta.clear();
-        actions
-    }
-
-    #[test]
-    fn every_sample_state_draws_without_asking_anything() {
-        for (name, state) in samples() {
-            let size = window_size(&state);
-            assert!(size.x > 0.0 && size.y > 0.0, "{name}");
-            assert!(frame(&state).is_empty(), "{name}: actions without any input");
-        }
-    }
+    // Every HUD must draw each state of `samples()` without a window: see `app.rs`, which keeps that
+    // check when this file is replaced. Below: what is specific to this debug HUD.
 
     #[test]
     fn the_collapsed_hud_is_not_larger() {

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use super::BoxKind;
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
-use crate::engine::{Backend, Engine, HotkeyId, MacroSetup, RegisterError, Snapshot};
+use crate::engine::{Backend, Command, Engine, HotkeyId, MacroSetup, RegisterError, Snapshot};
 use crate::guard::ButtonSet;
 use crate::hotkey::{Hotkey, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
@@ -159,7 +159,12 @@ fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: P
         let wait =
             engine.next_deadline().map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match inputs.recv_timeout(wait) {
-            Ok(Input::Command(command)) => engine.command(command, Instant::now()),
+            Ok(Input::Command(command)) => {
+                if matches!(command, Command::Stop(_)) {
+                    crate::crash::crash_test_point(ButtonSet::from_bits(HELD.load(Ordering::SeqCst)));
+                }
+                engine.command(command, Instant::now());
+            }
             Ok(Input::Event(event)) => engine.event(event, Instant::now()),
             Ok(Input::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}

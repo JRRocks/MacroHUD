@@ -44,16 +44,22 @@ pub const NAME: &str = "MacroHUD";
 /// Delivery version: 0.1.<CI run number>, or 0.1.0-dev for a local build (see build.rs).
 pub const VERSION: &str = env!("MACROHUD_VERSION");
 
-const USAGE: &str = "Utilisation : macrohud [--version | --aide]\n\
+const USAGE: &str = "Utilisation : macrohud [--version | --aide | --essai-plantage]\n\
     \n\
     Sans option : ouvre le HUD de MacroHUD.\n\
-    --version   affiche le numéro de version\n\
-    --aide      affiche cette aide";
+    --version          affiche le numéro de version\n\
+    --aide             affiche cette aide\n\
+    --essai-plantage   pour les essais : plante exprès à l'arrêt d'un maintien\n\
+    \u{20}                  (le bouton doit être relâché et un rapport écrit)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => run(),
+        Some("--essai-plantage") => {
+            crash::arm_crash_test();
+            run()
+        }
         Some("--version" | "-V") => {
             platform::attach_console();
             println!("{NAME} {VERSION}");
@@ -99,6 +105,11 @@ fn run() -> ExitCode {
         log::write(format!("Réglages : {warning}"));
         messages.push(Message::new(MessageLevel::Warning, warning));
     }
+    if loaded.rewrite
+        && let Err(e) = settings::save(&dir, &loaded.settings, &|h| h.label(&|_| None))
+    {
+        log::write(format!("Réglages corrigés non enregistrés : {e}"));
+    }
 
     let result = app::run(app::Startup { dir, settings: loaded.settings, messages });
 
@@ -119,7 +130,8 @@ fn run() -> ExitCode {
                 NAME,
                 &format!(
                     "MacroHUD ne peut pas ouvrir sa fenêtre.\n\n{e}\n\n\
-                     Une carte graphique compatible OpenGL 2 ou plus récente est nécessaire."
+                     Si l'erreur parle d'OpenGL : MacroHUD a besoin d'une carte graphique \
+                     (et de son pilote) compatible OpenGL 2 ou plus récent."
                 ),
                 BoxKind::Error,
             );
