@@ -87,6 +87,9 @@ cargo run                 # le HUD sous Linux, souris et clavier simulés (pour 
   ne se code qu'après le « oui » de l'utilisateur.
 - **Dépôt public : rien de privé.** Aucune capture du bureau de l'utilisateur, aucun rapport de test
   du PC dans le dépôt : ils vivent dans `essais-prives/`, ignoré par git.
+- **Pendant un test sur le PC, les autres sessions Claude font une halte** (D-14). La session
+  maître leur demande une pause avant le test souris et clavier, attend leur repos, et leur rend la
+  main après : une action d'une autre session fausserait le résultat.
 
 ## Ce que seul le PC peut vérifier
 
