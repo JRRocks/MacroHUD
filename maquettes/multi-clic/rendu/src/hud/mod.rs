@@ -18,7 +18,7 @@ use eframe::egui::{
     epaint::PathShape, pos2, vec2,
 };
 
-use crate::contract::{HudState, MacroOptions, MacroStatus, MacroView, MouseButton};
+use crate::contract::{HudState, MacroStatus, MacroView, MouseButton};
 use icons::Icon;
 use parts::{IconButton, KEY_HEIGHT, KeyLook};
 use style as s;
@@ -141,8 +141,7 @@ enum Mark {
 
 /// « Maintenir le clic », exactly as the HUD writes it (D-16).
 fn hold_row(view: &MacroView) -> Row<'_> {
-    let MacroOptions::HoldClick { button } = view.options;
-    let button = button_word(button);
+    let button = button_word(view.options.button());
     let (mark, words, weight) = match view.status {
         MacroStatus::Active => (Icon::Dot, format!("Active · {button} enfoncé"), s::SEMIBOLD),
         _ => (Icon::Stop, format!("Arrêtée · bouton {button}"), s::REGULAR),

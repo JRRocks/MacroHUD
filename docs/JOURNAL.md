@@ -21,6 +21,62 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · « Multi-clic » dans le HUD : la piste A codée
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw` : fusion du moteur
+  `claude/gifted-hypatia-g84kg1` (`cdd49f3`, fusion `a0866e9`), puis de `integration/passage-3`
+  (`6f090b6`, fusion `ef31ea8`), puis le code et le commit de fin `[ETAPE-FINIE visuel-multiclic]`.
+- **Objectif** : P2.3, coder la piste A choisie (D-26) sur le contrat du moteur (P2.1).
+- **Réalisé** :
+  - `src/hud/mod.rs` : lignes de « Multi-clic » « Arrêtée · gauche, 10/s », « Active · gauche,
+    10/s » et « En pause · souris ici » (deux barres, ligne verte, HUD de même taille), à la place
+    des lignes provisoires ; réglages : « Bouton cliqué », puis « Rapidité » et sa valeur
+    (« 10 clics/s »), le curseur de 1 à 15, puis « Raccourci » ; la fenêtre suit (290 × 293 avec
+    l'anneau, comme l'aperçu).
+  - `src/hud/parts.rs` : le curseur. Un clic sur un cran ou un glissé demande aussitôt
+    `HudAction::SetOptions(id, options.with_rate(r))`, macro arrêtée ou en marche, souris sur le HUD
+    ou non ; rien si la valeur ne change pas. Au clavier, quand il a le focus : flèches ±1, Début et
+    Fin aux bornes, anneau de focus bleu autour de la poignée.
+  - `src/hud/icons.rs` : icône `Pause` (deux barres), aux mesures de l'aperçu.
+  - Ajout, absent de l'aperçu : replié pendant une pause, la pastille garde « Active » et sa taille,
+    le point devient les deux barres (une taille qui bougerait sous la souris serait gênante).
+  - `src/hud/render.rs` (tests) : les trois vues de la piste A dessinées par le vrai HUD (survol et
+    flèche de la souris pour la troisième, comme l'aperçu) ; situations 14 à 19 et pastille en pause
+    à 200 % ; tests des lignes (3 boutons × 15 rapidités × 3 états), des tailles, du curseur (clic,
+    glissé, arrêtée, en marche, en pause) et des flèches du clavier.
+  - `maquettes/multi-clic/resultat.html` : le vrai HUD à côté de chaque vue de la piste A, l'écart
+    mesuré dessous, puis les situations du contrat ; `maquettes/LISEZMOI.md` : comment la refaire.
+  - Plan : P2.3 en 🖥️ ; R28 et R31 décrivent maintenant le curseur et le texte final « En pause ·
+    souris ici » (ils citaient `reglages.json` et le texte provisoire).
+- **Décisions** : aucune nouvelle. Seul ajout à l'aperçu : la pastille repliée en pause, signalée
+  dans `resultat.html`.
+- **Vérifications** :
+  - `cargo fmt --check` ; `cargo clippy --all-targets --locked -- -D warnings`, sous Linux et avec
+    `--target x86_64-pc-windows-msvc` ; `cargo test --locked` : 132 tests passent, dont 19 du HUD.
+  - Aperçu (piste A) et vrai HUD comparés pixel à pixel à 200 % : mêmes tailles ; 45, 37 et 37
+    pixels sur 418 600 diffèrent d'un seul niveau sur 255 (arrondis du dessin du texte).
+  - Vraie fenêtre sous Linux (Xvfb, souris simulée) : deux macros ; réglages de « Multi-clic »
+    ouverts, fenêtre de 290 × 293 ; clic sur le cran 3 : « 3 clics/s » et « Arrêtée · gauche,
+    3/s » ; « Activer », 3 s, puis « Active · gauche, 3/s » ; glissé jusqu'à 15 en marche :
+    « Active · gauche, 15/s », la macro continue ; « Quitter » ferme, `reglages.json` garde
+    `clicks_per_second: 15`.
+  - `resultat.html` dans Chromium à 400 et 1280 px : aucun défilement horizontal, aucun script,
+    aucune requête vers l'extérieur.
+  - CI de la branche : son résultat est écrit dans le commit de fin.
+- **Non vérifié sur le PC** : « En pause · souris ici » dans la vraie fenêtre (sous Linux, la
+  plateforme simulée ne voit jamais la souris sur le HUD) : R31 ; la rapidité changée au curseur
+  pendant le multi-clic, sans l'arrêter : R28.
+- **Problèmes et dette** :
+  - R28 dépend de D-27, appliqué par la session « programmation » : avec le moteur `cdd49f3`, le
+    premier clic sur le HUD pendant le multi-clic arrête encore la macro (entrée P2.1, « À
+    trancher »). Il faut réunir sa branche avant le passage 3.
+  - Encadré « Macro indisponible » de « Multi-clic » (texte du moteur) : la ligne se coupe après
+    un « « » ouvrant (« … raccourci de « » en fin de ligne). Le découpage du HUD ignore les
+    guillemets ; à corriger à part, sans changer les autres messages.
+- **Prochaine étape** : réunion avec D-27 sur `integration/passage-3`, CI, puis passage 3 sur le
+  PC (P2.4).
+
 ## 2026-11-20 · Aperçu de « Multi-clic » : piste A choisie
 
 - **Session** : maître

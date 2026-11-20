@@ -1,6 +1,8 @@
 //! The HUD: variant 2 « Liste compacte » of the mock-ups (decision D-12, `maquettes/variante-2.png`),
 //! drawn with egui. A title bar, one line per macro (▶ button, state, hotkey on the right), the
 //! settings of a macro unfolded under its line, the messages, and a small pill when folded.
+//! « Multi-clic » follows track A of its preview (D-26, `maquettes/multi-clic/apercu.html`): its
+//! speed is set with a slider from 1 to 15, also while it runs.
 //!
 //! What the rest of MacroHUD uses (interface set by the "programmation" session):
 //!
@@ -160,7 +162,7 @@ impl<'a> Layout<'a> {
             }
             if open == Some(i) {
                 let message = if in_settings { message_box(CONTENT_WIDTH) } else { None };
-                let height = options_height(state.capturing == Some(view.id), message.as_ref());
+                let height = options_height(view.options, state.capturing == Some(view.id), message.as_ref());
                 layout.blocks.push((Block::Options(i, message), height));
             }
         }
@@ -180,12 +182,16 @@ fn framed_height(message: &MessageBox) -> f32 {
     8.0 + message.height() + 10.0 + 1.0
 }
 
-/// Settings: button selector, hotkey line (or the capture zone), message.
-fn options_height(capturing: bool, message: Option<&MessageBox>) -> f32 {
+/// Settings: button selector, speed of « Multi-clic », hotkey line (or the capture zone), message.
+fn options_height(options: MacroOptions, capturing: bool, message: Option<&MessageBox>) -> f32 {
     let selector = s::LINE_12 + 4.0 + parts::SELECTOR_HEIGHT + 10.0;
+    let speed = match options {
+        MacroOptions::MultiClick { .. } => s::LINE_12 + 4.0 + parts::SLIDER_HEIGHT + 10.0,
+        MacroOptions::HoldClick { .. } => 0.0,
+    };
     let hotkey = if capturing { parts::CAPTURE_HEIGHT } else { 26.0 };
     let message = message.map_or(0.0, |m| 8.0 + m.height());
-    8.0 + selector + hotkey + message + 10.0 + 1.0
+    8.0 + selector + speed + hotkey + message + 10.0 + 1.0
 }
 
 /// The macro the folded pill shows: the first active one, else the first available one.
@@ -198,9 +204,11 @@ fn main_macro(state: &HudState) -> Option<&MacroView> {
         .or_else(|| state.macros.first())
 }
 
-/// Icon and word of the pill.
+/// Icon and word of the pill. « Multi-clic » whose clicks wait shows the two bars of « En pause »
+/// but keeps its word: the pill does not change size under the mouse.
 fn chip_state(view: &MacroView) -> (Icon, &'static str) {
     match view.status {
+        MacroStatus::Active if view.suspended => (Icon::Pause, "Active"),
         MacroStatus::Active => (Icon::Dot, "Active"),
         MacroStatus::Stopped => (Icon::Stop, "Arrêtée"),
         MacroStatus::Unavailable(_) => (Icon::Warning, "Indisponible"),
@@ -234,28 +242,34 @@ fn kind_icon(view: &MacroView) -> Icon {
     }
 }
 
-/// Icon, words and weight of the state line under a macro's name, as on the mock-up (D-16):
-/// « Arrêtée · bouton gauche », « Active · gauche enfoncé ». During the 3 s after « Activer » the
-/// engine keeps the macro « arrêtée » and counts down in a message, so « enfoncé » is always true.
+/// Icon, words and weight of the state line under a macro's name, as on the mock-ups.
+/// « Maintenir le clic » (D-16): « Arrêtée · bouton gauche », « Active · gauche enfoncé ». During the
+/// 3 s after « Activer » the engine keeps the macro « arrêtée » and counts down in a message, so
+/// « enfoncé » is always true. « Multi-clic » (D-26): « Arrêtée · gauche, 10/s », « Active · gauche,
+/// 10/s », and « En pause · souris ici » with two bars while its clicks wait for the mouse to leave
+/// the HUD; the line stays green, the HUD keeps its size.
 fn state_line(view: &MacroView) -> (Option<Icon>, String, f32) {
     if !view.available {
         return (None, "À venir".to_owned(), s::REGULAR);
     }
     let button = button_word(view);
-    // « Multi-clic » (provisional words, until its HUD is designed: P2.2, P2.3).
-    if let MacroOptions::MultiClick { rate, .. } = view.options {
-        let rate = rate.label();
-        return match view.status {
-            MacroStatus::Unavailable(_) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
-            MacroStatus::Active if view.suspended => (Some(Icon::Dot), "En pause · sur le HUD".to_owned(), s::SEMIBOLD),
-            MacroStatus::Active => (Some(Icon::Dot), format!("Active · {rate}"), s::SEMIBOLD),
-            MacroStatus::Stopped => (Some(Icon::Stop), format!("Arrêtée · {rate}"), s::REGULAR),
-        };
-    }
-    match view.status {
-        MacroStatus::Unavailable(_) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
-        MacroStatus::Active => (Some(Icon::Dot), format!("Active · {button} enfoncé"), s::SEMIBOLD),
-        MacroStatus::Stopped => (Some(Icon::Stop), format!("Arrêtée · bouton {button}"), s::REGULAR),
+    match (&view.status, view.options) {
+        (MacroStatus::Unavailable(_), _) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
+        (MacroStatus::Active, MacroOptions::MultiClick { .. }) if view.suspended => {
+            (Some(Icon::Pause), "En pause · souris ici".to_owned(), s::SEMIBOLD)
+        }
+        (MacroStatus::Active, MacroOptions::MultiClick { rate, .. }) => {
+            (Some(Icon::Dot), format!("Active · {button}, {}/s", rate.per_second()), s::SEMIBOLD)
+        }
+        (MacroStatus::Stopped, MacroOptions::MultiClick { rate, .. }) => {
+            (Some(Icon::Stop), format!("Arrêtée · {button}, {}/s", rate.per_second()), s::REGULAR)
+        }
+        (MacroStatus::Active, MacroOptions::HoldClick { .. }) => {
+            (Some(Icon::Dot), format!("Active · {button} enfoncé"), s::SEMIBOLD)
+        }
+        (MacroStatus::Stopped, MacroOptions::HoldClick { .. }) => {
+            (Some(Icon::Stop), format!("Arrêtée · bouton {button}"), s::REGULAR)
+        }
     }
 }
 
@@ -484,7 +498,8 @@ fn paint_row(
     text::put(p, &state, x, state_top, s::LINE_12);
 }
 
-/// Settings of a macro, under its line: held button, hotkey (or the capture zone), message.
+/// Settings of a macro, under its line: held or clicked button, speed of « Multi-clic », hotkey (or
+/// the capture zone), message.
 #[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
 fn paint_options(
     ui: &Ui,
@@ -513,6 +528,20 @@ fn paint_options(
         actions.push(HudAction::SetOptions(view.id, view.options.with_button(choice)));
     }
     y += parts::SELECTOR_HEIGHT + 10.0;
+
+    // « Multi-clic »: « Rapidité » and its value, then the slider. A new speed is asked for at once,
+    // also while the macro runs: it counts from the next click (D-22, D-27).
+    if let MacroOptions::MultiClick { rate, .. } = view.options {
+        text::draw(p, "Rapidité", 12.0, s::SEMIBOLD, s::TEXT_2, left, y, s::LINE_12);
+        let value = text::line(p, &rate.label(), 12.0, s::BOLD, s::TEXT, f32::INFINITY);
+        text::put(p, &value, left + CONTENT_WIDTH - value.size().x, y, s::LINE_12);
+        y += s::LINE_12 + 4.0;
+        let line = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::SLIDER_HEIGHT));
+        if let Some(new) = parts::rate_slider(ui, p, line, id.with("rapidite"), rate) {
+            actions.push(HudAction::SetOptions(view.id, view.options.with_rate(new)));
+        }
+        y += parts::SLIDER_HEIGHT + 10.0;
+    }
 
     if layout.state.capturing == Some(view.id) {
         let zone = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::CAPTURE_HEIGHT));

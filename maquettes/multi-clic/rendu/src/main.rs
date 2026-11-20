@@ -5,9 +5,10 @@
 //!
 //! `cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml` (from the root of
 //! MacroHUD, or plain `cargo run --release` here) writes the PNGs next to `apercu.html`, then
-//! rebuilds the page from `apercu.modele.html` with the images inside it (data URIs). The two
-//! « Aujourd'hui » images are those of `maquettes/rendu-egui/`, which MacroHUD's own test renders
-//! from the current HUD: `MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::` at the root, first.
+//! rebuilds the page from `apercu.modele.html` with the images inside it (data URIs), and
+//! `resultat.html` (P2.3), the real HUD beside the chosen track. The « Aujourd'hui » images and the
+//! real HUD's are those of `maquettes/rendu-egui/`, which MacroHUD's own test renders:
+//! `MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::` at the root, first.
 //! With `-- --mesures`, it only prints the room the state lines of « Multi-clic » have.
 
 #![allow(dead_code, reason = "the HUD's files bring helpers that these renders do not use")]
@@ -100,7 +101,14 @@ fn main() {
             println!("{} ({} × {})", path.display(), image.width, image.height);
         }
     }
-    page::write(&folder);
+    page::copy_today(&folder);
+    page::write(&folder, "apercu.modele.html", "apercu.html");
+    // The result of P2.3 needs the real HUD's renders (`renders_multi_click`, with MACROHUD_RENDUS).
+    if folder.join("../rendu-egui/multi-1-reglages@2x.png").exists() {
+        page::write(&folder, "resultat.modele.html", "resultat.html");
+    } else {
+        println!("resultat.html non refaite : rendus du vrai HUD absents (voir maquettes/LISEZMOI.md)");
+    }
 }
 
 /// Every state line of « Multi-clic » fits its line, for each button and each speed: none is cut.

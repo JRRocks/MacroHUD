@@ -92,9 +92,23 @@ questions pour l'utilisateur. Ce sont des maquettes : rien n'est codé dans `src
 
 ```bash
 MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::                         # le HUD actuel, d'abord
-cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les neuf vues et la page
+cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les neuf vues et les pages
 cargo test --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml    # aucune ligne d'état coupée
 ```
 
-Le texte de la page se modifie dans `multi-clic/rendu/apercu.modele.html`, puis la commande ci-dessus
-refait `apercu.html`.
+Le texte des pages se modifie dans `multi-clic/rendu/apercu.modele.html` et
+`resultat.modele.html`, puis la commande ci-dessus refait `apercu.html` et `resultat.html`.
+
+## Résultat de « Multi-clic » (tâche P2.3)
+
+La piste A choisie (D-26) est codée dans `src/hud/`. `multi-clic/resultat.html` (sans script, images
+intégrées) place le vrai HUD à côté des trois vues de la piste A, avec l'écart mesuré pixel à pixel
+sous chaque paire, puis le vrai HUD dans chaque situation du contrat où « Multi-clic » paraît.
+
+- `rendu-egui/multi-1-reglages`, `multi-2-active`, `multi-3-en-pause` (100 % et 200 %) : les trois
+  vues de l'aperçu, dessinées par le vrai HUD (la flèche de la souris de la troisième est ajoutée
+  par le test, comme dans l'aperçu) ; `multi-4-replie-en-pause@2x.png` : la pastille pendant une
+  pause.
+- `rendu-egui/situation-14` à `19` : les situations du contrat avec « Multi-clic » (200 % en plus).
+
+Les mêmes commandes que pour l'aperçu refont ces images et la page.

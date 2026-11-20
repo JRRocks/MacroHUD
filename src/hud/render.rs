@@ -19,9 +19,11 @@ use eframe::egui::{
     TextureOptions, TexturesDelta, Ui, UiBuilder, Vec2, ViewportId, ViewportInfo, pos2, vec2,
 };
 
-use super::{paint, set_open_macro, style, text, window_size};
+use super::icons::Icon;
+use super::{paint, parts, set_open_macro, style, text, window_size};
 use crate::contract::{
-    HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, Message, MessageLevel, MouseButton, samples,
+    ClickRate, HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, Message, MessageLevel, MouseButton,
+    samples,
 };
 
 // Rasteriser ---------------------------------------------------------------------------------
@@ -243,10 +245,23 @@ impl Renderer {
         background: Color32,
         ui_fn: &mut dyn FnMut(&mut Ui),
     ) -> Image {
-        // The first pass loads the glyphs; the second one is painted.
-        let mut first = self.ctx.run_ui(Self::input(size, pixels_per_point, Vec::new()), |ui| ui_fn(ui));
+        self.render_pointed(size, pixels_per_point, background, None, ui_fn)
+    }
+
+    /// The same, the mouse pointer resting at `pointer` (hover effects show).
+    fn render_pointed(
+        &mut self,
+        size: Vec2,
+        pixels_per_point: f32,
+        background: Color32,
+        pointer: Option<Pos2>,
+        ui_fn: &mut dyn FnMut(&mut Ui),
+    ) -> Image {
+        let events = || pointer.map(|pos| vec![Event::PointerMoved(pos)]).unwrap_or_default();
+        // The first pass loads the glyphs (and places the pointer); the second one is painted.
+        let mut first = self.ctx.run_ui(Self::input(size, pixels_per_point, events()), |ui| ui_fn(ui));
         self.apply(&mut first.textures_delta);
-        let mut output = self.ctx.run_ui(Self::input(size, pixels_per_point, Vec::new()), |ui| ui_fn(ui));
+        let mut output = self.ctx.run_ui(Self::input(size, pixels_per_point, events()), |ui| ui_fn(ui));
         self.apply(&mut output.textures_delta);
         let ppp = output.pixels_per_point;
         let primitives = self.ctx.tessellate(output.shapes, ppp);
@@ -350,15 +365,80 @@ fn mockup_views() -> Vec<View> {
 
 /// The HUD alone, transparent around it, with the shadow of the mock-up.
 fn render_alone(renderer: &mut Renderer, view: &View, ppp: f32) -> Image {
+    render_pointed(renderer, view, ppp, None)
+}
+
+/// The same, with the mouse pointer drawn at `spot` (from the top left of the HUD), hovering there.
+fn render_pointed(renderer: &mut Renderer, view: &View, ppp: f32, spot: Option<Pos2>) -> Image {
     let size = view.size();
     let [side, top, bottom] = style::SHADOW_MARGIN;
     let canvas = vec2(size.x + 2.0 * side, size.y + top + bottom);
-    renderer.render(canvas, ppp, Color32::TRANSPARENT, &mut |ui| {
-        let rect = Rect::from_min_size(pos2(side, top), size);
+    let origin = pos2(side, top);
+    let pointer = spot.map(|spot| origin + spot.to_vec2());
+    renderer.render_pointed(canvas, ppp, Color32::TRANSPARENT, pointer, &mut |ui| {
+        let rect = Rect::from_min_size(origin, size);
         ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
             view.paint(ui);
         });
+        if let Some(tip) = pointer {
+            paint_pointer(ui.painter(), tip);
+        }
     })
+}
+
+/// The arrow of the system's pointer, its tip at `tip`, as on the « Multi-clic » preview: not part
+/// of the HUD, it shows where the mouse is in the renders.
+fn paint_pointer(p: &egui::Painter, tip: Pos2) {
+    let at = |x: f32, y: f32| tip + vec2(x, y);
+    // Head: a triangle whose lower edge runs from (0, 16) to (11.3, 11.3). Tail: a bar leaving that
+    // edge between A and B, going down to the right. Filled apart (egui fills convex shapes only),
+    // the tail reaching a little into the head so that no seam shows, then outlined as one.
+    let (a, b) = (at(3.6, 14.5), at(6.8, 13.17));
+    let down = vec2(0.419, 0.908);
+    let (c, d) = (b + 6.0 * down, a + 6.0 * down);
+    let head = vec![at(0.0, 0.0), at(0.0, 16.0), at(11.3, 11.3)];
+    let tail = vec![a - 1.5 * down, b - 1.5 * down, c, d];
+    p.add(egui::Shape::convex_polygon(head, Color32::WHITE, egui::Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(tail, Color32::WHITE, egui::Stroke::NONE));
+    let outline = vec![at(0.0, 0.0), at(0.0, 16.0), a, d, c, b, at(11.3, 11.3)];
+    p.add(egui::epaint::PathShape::closed_line(outline, egui::Stroke::new(1.0, Color32::BLACK)));
+}
+
+// « Multi-clic » ------------------------------------------------------------------------------
+
+const MULTI: MacroId = MacroId::MULTI_CLICK;
+
+/// The situation of the contract called `name`.
+fn sample(name: &str) -> HudState {
+    samples().into_iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("situation « {name} »")).1
+}
+
+/// The two macros, « Multi-clic » `status`d, its clicks waiting or not.
+fn two_macros(status: MacroStatus, suspended: bool) -> HudState {
+    let mut state = sample("deux macros");
+    state.macros[1].status = status;
+    state.macros[1].suspended = suspended;
+    state
+}
+
+/// The slider's line in the open settings of « Multi-clic » (second macro), from the top left of
+/// the HUD: ring, border, title bar, two lines, then « Bouton cliqué », its selector, « Rapidité ».
+fn slider_line() -> Rect {
+    let top = 2.0 + 32.0 + 2.0 * 50.0 + 8.0 + 15.0 + 4.0 + 30.0 + 10.0 + 15.0 + 4.0;
+    Rect::from_min_size(pos2(2.0 + 12.0, top), vec2(266.0, parts::SLIDER_HEIGHT))
+}
+
+/// The three views of track A of the preview (`maquettes/multi-clic/a-*@2x.png`), drawn by the real
+/// HUD: settings open with the macro stopped; active; active, the mouse on the thumb (clicks wait).
+/// The last one has the pointer of the preview, 3 px right and down of the thumb's centre.
+fn multi_click_views() -> Vec<(View, Option<Pos2>)> {
+    let thumb = parts::slider_thumb(slider_line(), ClickRate::DEFAULT);
+    let view = |key, state| View { key, state, open: Some(MULTI) };
+    vec![
+        (view("multi-1-reglages", two_macros(MacroStatus::Stopped, false)), None),
+        (view("multi-2-active", two_macros(MacroStatus::Active, false)), None),
+        (view("multi-3-en-pause", two_macros(MacroStatus::Active, true)), Some(thumb + vec2(3.0, 3.0))),
+    ]
 }
 
 // Tests ---------------------------------------------------------------------------------------
@@ -616,18 +696,135 @@ fn a_long_version_stays_clear_of_the_buttons() {
     set_open_macro(None);
 }
 
-/// The state line never needs « … », whatever the button and the state.
+/// The state line never needs « … », whatever the macro, the button, the speed and the state.
 #[test]
 fn state_lines_fit_their_line() {
+    // Room in a line: 286 px inside, minus ▶, the F8 (or F9) key, the arrow and the gaps, the icon.
+    let room = 218.0 - 8.0 - 54.0 - 13.0;
+    let multi = sample("deux macros").macros.remove(1);
     for button in MouseButton::ALL {
-        for status in [MacroStatus::Stopped, MacroStatus::Active] {
-            let view = MacroView { status, options: MacroOptions::HoldClick { button }, ..stopped().macros.remove(0) };
-            let (_, words, weight) = super::state_line(&view);
-            // Room in a line: 286 px inside, minus ▶, the F8 key, the arrow and the gaps, minus the icon.
-            let room = 218.0 - 8.0 - 54.0 - 13.0;
-            assert!(text::width(&words, 12.0, weight) <= room, "« {words} » dépasse");
+        let mut options = vec![MacroOptions::HoldClick { button }];
+        for rate in ClickRate::MIN.per_second()..=ClickRate::MAX.per_second() {
+            options.push(MacroOptions::MultiClick { button, rate: ClickRate::new(rate) });
+        }
+        for options in options {
+            for (status, suspended) in
+                [(MacroStatus::Stopped, false), (MacroStatus::Active, false), (MacroStatus::Active, true)]
+            {
+                let base = if matches!(options, MacroOptions::HoldClick { .. }) {
+                    stopped().macros.remove(0)
+                } else {
+                    multi.clone()
+                };
+                let view = MacroView { status, options, suspended, ..base };
+                let (_, words, weight) = super::state_line(&view);
+                assert!(text::width(&words, 12.0, weight) <= room, "« {words} » dépasse");
+            }
         }
     }
+}
+
+/// « Multi-clic » reads as on track A of its preview (D-26).
+#[test]
+fn multi_click_lines_read_as_chosen() {
+    let line = |status, suspended, options| {
+        let mut view = sample("deux macros").macros.remove(1);
+        (view.status, view.suspended, view.options) = (status, suspended, options);
+        super::state_line(&view)
+    };
+    let left = MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT };
+    let right = MacroOptions::MultiClick { button: MouseButton::Right, rate: ClickRate::MIN };
+    assert_eq!(
+        line(MacroStatus::Stopped, false, left),
+        (Some(Icon::Stop), "Arrêtée · gauche, 10/s".into(), style::REGULAR)
+    );
+    assert_eq!(
+        line(MacroStatus::Active, false, left),
+        (Some(Icon::Dot), "Active · gauche, 10/s".into(), style::SEMIBOLD)
+    );
+    assert_eq!(
+        line(MacroStatus::Active, true, left),
+        (Some(Icon::Pause), "En pause · souris ici".into(), style::SEMIBOLD)
+    );
+    assert_eq!(line(MacroStatus::Stopped, false, right).1, "Arrêtée · droit, 1/s");
+    // The pause changes neither the size of the HUD nor that of the folded pill.
+    for open in [None, Some(MULTI)] {
+        set_open_macro(open);
+        let active = window_size(&two_macros(MacroStatus::Active, false));
+        assert_eq!(window_size(&two_macros(MacroStatus::Active, true)), active);
+    }
+    let folded = |suspended| {
+        let mut state = two_macros(MacroStatus::Active, suspended);
+        state.collapsed = true;
+        window_size(&state)
+    };
+    assert_eq!(folded(true), folded(false));
+    set_open_macro(None);
+}
+
+/// The settings of « Multi-clic »: as tall as the preview's (293 px with the ring), 54 px more than
+/// those of « Maintenir le clic » (the speed: title, slider, gap).
+#[test]
+fn multi_click_settings_have_the_preview_size() {
+    set_open_macro(Some(MULTI));
+    assert_eq!(window_size(&two_macros(MacroStatus::Stopped, false)), vec2(290.0, 293.0));
+    set_open_macro(Some(HOLD));
+    assert_eq!(window_size(&two_macros(MacroStatus::Stopped, false)).y, 293.0 - 53.0);
+    set_open_macro(None);
+    assert_eq!(window_size(&two_macros(MacroStatus::Stopped, false)).y, 2.0 + 32.0 + 100.0 + 2.0);
+}
+
+/// The slider asks for the new speed at once, stopped or running, mouse on the HUD or not (D-27):
+/// a click on a notch, a drag, nothing when the speed does not change.
+#[test]
+fn the_speed_slider_asks_for_the_new_speed() {
+    let line = slider_line();
+    let at = |rate: u32| parts::slider_thumb(line, ClickRate::new(rate));
+    let set = |rate: u32| {
+        HudAction::SetOptions(MULTI, MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::new(rate) })
+    };
+    for (status, suspended) in
+        [(MacroStatus::Stopped, false), (MacroStatus::Active, false), (MacroStatus::Active, true)]
+    {
+        let view = view_of(two_macros(status, suspended), Some(MULTI));
+        assert_eq!(click(&view, at(3)), vec![set(3)], "cran 3");
+        assert_eq!(click(&view, at(3) + vec2(4.0, 5.0)), vec![set(3)], "près du cran 3");
+        assert_eq!(click(&view, pos2(line.left() + 22.0, line.center().y)), vec![set(1)], "début de la piste");
+        assert_eq!(click(&view, pos2(line.right() - 22.0, line.center().y)), vec![set(15)], "fin de la piste");
+        assert!(click(&view, at(10)).is_empty(), "la rapidité ne change pas");
+        let dragged = gesture(&view, at(10), at(15));
+        assert_eq!(dragged.last(), Some(&set(15)), "glissé jusqu'à 15 : {dragged:?}");
+        assert!(dragged.iter().all(|a| matches!(a, HudAction::SetOptions(MULTI, _))), "{dragged:?}");
+    }
+    // The bounds and the track are not clickable outside the track.
+    let view = view_of(two_macros(MacroStatus::Stopped, false), Some(MULTI));
+    assert!(click(&view, pos2(line.left() + 3.0, line.center().y)).is_empty(), "« 1 »");
+    set_open_macro(None);
+}
+
+/// With the keyboard focus on the slider, the arrows move the speed by one.
+#[test]
+fn the_arrows_move_the_speed() {
+    let state = two_macros(MacroStatus::Active, false);
+    let mut renderer = Renderer::new();
+    let mut actions = Vec::new();
+    let key = |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
+    let steps = [vec![], vec![], vec![key(egui::Key::ArrowRight)], vec![], vec![key(egui::Key::ArrowLeft)], vec![]];
+    for (k, events) in steps.into_iter().enumerate() {
+        renderer.pass(vec2(400.0, 400.0), events, &mut |ui| {
+            set_open_macro(Some(MULTI));
+            if k == 0 {
+                let slider = ui.make_persistent_id("macrohud").with(1usize).with("rapidite");
+                ui.memory_mut(|m| m.request_focus(slider));
+            }
+            actions.extend(paint(ui, &state, false));
+        });
+    }
+    let set = |rate| {
+        HudAction::SetOptions(MULTI, MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::new(rate) })
+    };
+    assert_eq!(actions, vec![set(11), set(9)]);
+    set_open_macro(None);
 }
 
 #[test]
@@ -785,6 +982,49 @@ fn sheet(renderer: &mut Renderer, number: &str, title: &str, idea: &str, tiles: 
 fn capitalised(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
+/// « Multi-clic » drawn by the real HUD: the three views of track A of its preview, and pixels that
+/// tell them apart (the pause sign, the thumb). With `MACROHUD_RENDUS`, also at 200 % for the page
+/// `maquettes/multi-clic/resultat.html`, with every situation of the contract where it shows and the
+/// pill folded while its clicks wait.
+#[test]
+fn renders_multi_click() {
+    let mut renderer = Renderer::new();
+    let dir = output_dir();
+    let [side, top, _] = style::SHADOW_MARGIN.map(|v| v as usize);
+    let big = std::env::var_os("MACROHUD_RENDUS").is_some();
+    for (view, spot) in multi_click_views() {
+        let image = render_pointed(&mut renderer, &view, 1.0, spot);
+        image.save_png(&dir.join(format!("{}.png", view.key)));
+        if big {
+            render_pointed(&mut renderer, &view, 2.0, spot).save_png(&dir.join(format!("{}@2x.png", view.key)));
+        }
+        // The state line of « Multi-clic » (second line): a bar of « ❚❚ », and between the bars.
+        let (bar, gap) = (image.pixel(side + 57, top + 118), image.pixel(side + 60, top + 118));
+        match view.key {
+            "multi-3-en-pause" => assert_eq!((bar, gap), (style::ON_INK, style::ON)),
+            "multi-2-active" => assert_eq!(gap, style::ON_INK, "le point « Active »"),
+            _ => assert_eq!(gap, style::TEXT_2, "le carré « Arrêtée »"),
+        }
+        // The thumb, on 10 clicks per second.
+        let thumb = parts::slider_thumb(slider_line(), ClickRate::DEFAULT);
+        assert_eq!(image.pixel(side + thumb.x as usize - 3, top + thumb.y as usize - 3), style::KEY, "{}", view.key);
+    }
+    if !big {
+        return;
+    }
+    for (number, (name, state)) in samples().into_iter().enumerate() {
+        if state.macros.iter().any(|m| m.id == MULTI) {
+            let view = View { key: name, state, open: None };
+            render_alone(&mut renderer, &view, 2.0).save_png(&dir.join(format!("situation-{:02}@2x.png", number + 1)));
+        }
+    }
+    let mut folded = two_macros(MacroStatus::Active, true);
+    folded.collapsed = true;
+    let view = View { key: "multi-4-replie-en-pause", state: folded, open: None };
+    render_alone(&mut renderer, &view, 2.0).save_png(&dir.join("multi-4-replie-en-pause@2x.png"));
+    set_open_macro(None);
 }
 
 /// The comparison sheets, only when `MACROHUD_RENDUS` names where to write them (slow in debug).
