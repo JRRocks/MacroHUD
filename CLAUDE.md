@@ -53,7 +53,8 @@ cargo run                 # le HUD sous Linux, souris et clavier simulés (pour 
   Affichée dans le HUD et par `macrohud --version`.
 - Version = `0.1.<numéro d'exécution de la CI>` (aussi dans les propriétés du fichier) ; une
   compilation locale dit `0.1.0-dev`. Ne pas renommer `.github/workflows/ci.yml` : les numéros
-  repartiraient de 1.
+  repartiraient de 1. Relancer une exécution (« Re-run ») garde son numéro : sur `main`, si la
+  Release de ce numéro existe déjà, la publication échoue au lieu de livrer deux fois le même numéro.
 - À chaque push sur n'importe quelle branche, la CI teste puis compile ; `MacroHUD.<version>.exe` est
   alors un artefact de l'exécution (onglet Actions) : c'est lui que la session « test » essaie avant
   une fusion. Sur `main` seulement, et seulement si tout est passé : Release `v<version>`.
