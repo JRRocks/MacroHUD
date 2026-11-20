@@ -323,7 +323,7 @@ fn mockup_views() -> Vec<View> {
             "d",
             with(|s| {
                 s.message =
-                    Some(Message::new(MessageLevel::Warning, "Alt+Tab est déjà pris par Windows. F8 reste actif."))
+                    Some(Message::hotkey_refused(HOLD, "Alt+Tab", "Alt+Tab est déjà pris par Windows. F8 reste actif."))
             }),
             Some(HOLD),
         ),
@@ -365,7 +365,8 @@ fn render_alone(renderer: &mut Renderer, view: &View, ppp: f32) -> Image {
 /// Same sizes as the mock-up (measured in `maquettes/index.html`), plus the 1 px black ring.
 #[test]
 fn the_views_have_the_mockup_sizes() {
-    let expected = [("a", 290.0, 190.0), ("b", 290.0, 86.0), ("c", 290.0, 242.0), ("e", 290.0, 186.0)];
+    let expected =
+        [("a", 290.0, 190.0), ("b", 290.0, 86.0), ("c", 290.0, 242.0), ("d", 290.0, 311.0), ("e", 290.0, 186.0)];
     let views = mockup_views();
     for (key, width, height) in expected {
         let view = views.iter().find(|v| v.key == key).expect("vue");
@@ -377,10 +378,6 @@ fn the_views_have_the_mockup_sizes() {
         assert_eq!(size.y, 36.0, "vue {key}");
         assert!((size.x - width).abs() <= 3.0, "vue {key} : {size:?}");
     }
-    // The message sits under the hotkey line, 8 px apart (no action button: the contract does
-    // not say which macro a message is about).
-    let d = views.iter().find(|v| v.key == "d").expect("vue").size();
-    assert!(d.y > 190.0 + 8.0 + 60.0, "{d:?}");
     set_open_macro(None);
 }
 
@@ -522,6 +519,56 @@ fn clicks_ask_for_the_contract_actions() {
     set_open_macro(None);
 }
 
+/// « Raccourci refusé » (D-16): « Choisir une autre touche » asks a new hotkey for the macro the
+/// message concerns; folded, it also unfolds the HUD so that « Appuie sur une touche… » shows.
+#[test]
+fn choosing_another_key_after_a_refusal() {
+    let refused = |collapsed| {
+        with(|s| {
+            s.collapsed = collapsed;
+            s.message =
+                Some(Message::hotkey_refused(HOLD, "Alt+Tab", "Alt+Tab est déjà pris par Windows. F8 reste actif."))
+        })
+    };
+    // Unfolded: the settings stay open under the line, the box sits under the hotkey line.
+    let unfolded = view_of(refused(false), None);
+    assert_eq!(unfolded.size(), vec2(290.0, 311.0), "réglages ouverts, comme la maquette");
+    let box_top = 2.0 + 32.0 + 50.0 + 8.0 + 15.0 + 4.0 + 30.0 + 10.0 + 26.0 + 8.0;
+    let button = pos2(2.0 + 12.0 + 11.0 + 18.0 + 10.0 + 60.0, box_top + 11.0 + 18.0 + 3.0 + 2.0 * 16.0 + 8.0 + 14.0);
+    assert_eq!(click(&unfolded, button), vec![HudAction::StartCapture(HOLD)]);
+    // Folded: under the pill.
+    let folded = view_of(refused(true), None);
+    let box_top = 36.0 + 6.0 + 1.0;
+    let button = pos2(1.0 + 11.0 + 18.0 + 10.0 + 60.0, box_top + 11.0 + 18.0 + 3.0 + 2.0 * 16.0 + 8.0 + 14.0);
+    assert_eq!(click(&folded, button), vec![HudAction::SetCollapsed(false), HudAction::StartCapture(HOLD)]);
+    // Another kind of message has no button there.
+    let general = view_of(
+        with(|s| {
+            s.collapsed = true;
+            s.message = Some(
+                Message::new(MessageLevel::Warning, "Alt+Tab est déjà pris par Windows. F8 reste actif.")
+                    .concerning(HOLD),
+            )
+        }),
+        None,
+    );
+    assert!(click(&general, button).is_empty());
+    set_open_macro(None);
+}
+
+/// A message about a macro sits in its open settings; a general one below the macros.
+#[test]
+fn messages_sit_with_their_macro() {
+    let text = "Raccourci inchangé : F8.";
+    let about = with(|s| s.message = Some(Message::new(MessageLevel::Info, text).concerning(HOLD)));
+    let general = with(|s| s.message = Some(Message::new(MessageLevel::Info, text)));
+    set_open_macro(Some(HOLD));
+    // In the settings: 8 px above the box; below the macros: its own block (8 + box + 10 + line).
+    assert_eq!(window_size(&general).y - window_size(&about).y, 11.0);
+    set_open_macro(None);
+    assert_eq!(window_size(&general).y, window_size(&about).y, "réglages fermés : en bas dans les deux cas");
+}
+
 #[test]
 fn the_arrow_unfolds_the_settings_without_asking_anything() {
     let closed = view_of(stopped(), None);
@@ -599,7 +646,8 @@ fn a_long_hotkey_is_cut_not_the_panel() {
 fn folded_messages_show_under_the_pill() {
     let state = with(|s| {
         s.collapsed = true;
-        s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."));
+        s.message =
+            Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8.").concerning(HOLD));
     });
     set_open_macro(None);
     let size = window_size(&state);
@@ -779,17 +827,22 @@ fn comparison_sheets() {
     situations.push((
         "après « Activer » : décompte de 3 s",
         with(|s| {
-            s.message = Some(Message::new(
-                MessageLevel::Info,
-                "Activation dans 3 s : place la souris là où le clic doit rester enfoncé.",
-            ));
+            s.message = Some(
+                Message::new(
+                    MessageLevel::Info,
+                    "Activation dans 3 s : place la souris là où le clic doit rester enfoncé.",
+                )
+                .concerning(HOLD),
+            );
         }),
     ));
     situations.push((
         "F8 avec la souris sur le HUD replié",
         with(|s| {
             s.collapsed = true;
-            s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."));
+            s.message = Some(
+                Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8.").concerning(HOLD),
+            );
         }),
     ));
     let tiles: Vec<Tile> = situations

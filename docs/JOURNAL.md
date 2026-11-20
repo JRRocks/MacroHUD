@@ -21,6 +21,44 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Correctif 2 du HUD : l'encadré « Raccourci refusé » de la maquette
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw` ; fusion de `claude/gifted-hypatia-g84kg1`
+  (`e6c1ec9`, contrat des messages), puis commit « Correctif 2 du HUD : encadré « Raccourci refusé » »,
+  puis le marqueur vide `[ETAPE-FINIE visuel-correctif-2]`.
+- **Objectif** : point 3 de P1.9 (D-16), sur le contrat complété (`about`, `kind`).
+- **Réalisé** :
+  - Message de sorte `HotkeyRefused` : encadré ambre titré « Raccourci refusé », triangle, texte du
+    moteur avec sa dernière phrase à la ligne (« Alt+Tab est déjà pris par Windows. » puis « F8 reste
+    actif. », comme la maquette), bouton « Choisir une autre touche » qui renvoie `StartCapture` pour
+    la macro `about` (seulement si elle existe et est disponible). Pendant que le refus est affiché,
+    les réglages de cette macro restent ouverts, comme pendant la capture qui l'a précédé : la vue d
+    de la maquette est retrouvée, à sa taille exacte (290 × 311).
+  - Les autres messages ne changent pas (titre selon le niveau). Un message qui concerne une macro se
+    place dans ses réglages s'ils sont ouverts, sinon sous les macros ; un message général toujours
+    sous les macros.
+  - HUD replié : l'encadré sous la pastille, comme les autres messages. **Choix pour le bouton** : il
+    reste, et il déplie aussi le HUD (`SetCollapsed(false)` puis `StartCapture`), car la pastille ne
+    montre pas la capture : l'utilisateur voit « Appuie sur une touche… ».
+  - `src/hud/render.rs` : la vue d est un vrai « raccourci refusé » ; les messages d'exemple du moteur
+    nomment leur macro (`concerning`), comme le moteur ; la planche des situations montre les deux
+    refus de `samples()` (15 cas).
+- **Décisions** (à confirmer par la session maître) : le bouton du refus, HUD replié, déplie et
+  demande la capture ; un message lié à une macro se place dans ses réglages ouverts.
+- **Vérifications** : `cargo fmt --check` ; `cargo clippy --all-targets --locked -- -D warnings` sous
+  Linux et pour `x86_64-pc-windows-msvc` : sans remarque ; `cargo test --locked` : 106 tests verts,
+  dont 14 du HUD (vue d à la taille de la maquette ; clic sur « Choisir une autre touche » →
+  `StartCapture`, replié → `SetCollapsed(false)` puis `StartCapture` ; aucun bouton sur un autre
+  message ; message placé avec sa macro). Rendus régénérés (deux exécutions identiques) : vue d
+  comparée agrandie à la maquette, même dessin.
+- **Non vérifié sur le PC** : R25 (refus de raccourci) avec l'encadré et son bouton.
+- **Problèmes et dette** : aucun nouveau. Le liseré autour de la fenêtre est confié à la session
+  « programmation » (son correctif 3).
+- **Prochaine étape** : passage 3 sur le PC.
+
+---
+
 ## 2026-11-20 · Correctif 2 : le relâchement arrive à l'application, refus de raccourci plus courts
 
 - **Session** : programmation

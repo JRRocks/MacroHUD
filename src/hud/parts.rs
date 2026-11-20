@@ -9,7 +9,7 @@ use eframe::egui::{
 use super::icons::{self, Icon};
 use super::style as s;
 use super::text;
-use crate::contract::{MessageLevel, MouseButton};
+use crate::contract::{MacroId, Message, MessageKind, MessageLevel, MouseButton};
 
 /// Clickable area: hand cursor on hover, accessibility label, keyboard focus ring.
 pub fn clickable(ui: &Ui, rect: Rect, id: Id, label: &str, radius: u8) -> Response {
@@ -250,6 +250,8 @@ pub struct MessageBox {
     pub level: MessageLevel,
     pub title: &'static str,
     pub lines: Vec<String>,
+    /// « Raccourci refusé »: the macro « Choisir une autre touche » asks a new hotkey for.
+    pub retry: Option<MacroId>,
 }
 
 /// Title above a message of the contract: its level in words (never shown by colour alone).
@@ -261,19 +263,48 @@ pub fn level_title(level: MessageLevel) -> &'static str {
     }
 }
 
+/// The button of a « Raccourci refusé » message.
+pub const RETRY_LABEL: &str = "Choisir une autre touche";
+
 /// Text column of a message box `width` wide: 1 px border, 10 px padding, 18 px icon, 10 px
 /// gap, 12 px padding, 1 px border.
 fn text_width(width: f32) -> f32 {
     width - 52.0
 }
 
+/// Splits « Alt+Tab est déjà pris par Windows. F8 reste actif. » before its last sentence, which then
+/// starts its own line, as on the mock-up.
+fn last_sentence_apart(text: &str) -> Vec<&str> {
+    match text.trim_end().rfind(". ") {
+        Some(end) => vec![&text[..=end], text[end + 2..].trim_start()],
+        None => vec![text],
+    }
+}
+
 impl MessageBox {
     pub fn new(level: MessageLevel, title: &'static str, text: &str, width: f32) -> Self {
-        MessageBox { level, title, lines: text::wrap(text, 12.0, s::REGULAR, text_width(width)) }
+        MessageBox { level, title, lines: text::wrap(text, 12.0, s::REGULAR, text_width(width)), retry: None }
+    }
+
+    /// A message of the contract. « Raccourci refusé » (D-16): amber box with that title, the text
+    /// with its last sentence on its own line, and « Choisir une autre touche » when `retry` names
+    /// a macro that can take a new hotkey.
+    pub fn from_contract(message: &Message, retry: Option<MacroId>, width: f32) -> Self {
+        match &message.kind {
+            MessageKind::HotkeyRefused { .. } => {
+                let lines = last_sentence_apart(&message.text)
+                    .into_iter()
+                    .flat_map(|part| text::wrap(part, 12.0, s::REGULAR, text_width(width)))
+                    .collect();
+                MessageBox { level: MessageLevel::Warning, title: "Raccourci refusé", lines, retry }
+            }
+            MessageKind::General => MessageBox::new(message.level, level_title(message.level), &message.text, width),
+        }
     }
 
     pub fn height(&self) -> f32 {
-        1.0 + 10.0 + s::LINE_14 + 3.0 + self.lines.len() as f32 * s::LINE_MESSAGE + 12.0 + 1.0
+        let button = if self.retry.is_some() { 8.0 + 28.0 } else { 0.0 };
+        1.0 + 10.0 + s::LINE_14 + 3.0 + self.lines.len() as f32 * s::LINE_MESSAGE + button + 12.0 + 1.0
     }
 }
 
@@ -283,24 +314,27 @@ struct Colours {
     icon: Icon,
     title: Color32,
     text: Color32,
+    button: Color32,
+    button_hover: Color32,
 }
 
 fn colours(level: MessageLevel) -> Colours {
+    let base =
+        |fill, edge, icon, title, text| Colours { fill, edge, icon, title, text, button: fill, button_hover: fill };
     match level {
-        MessageLevel::Info => {
-            Colours { fill: s::INFO_BG, edge: s::INFO, icon: Icon::Info, title: s::TEXT, text: s::INFO_TEXT }
-        }
-        MessageLevel::Warning => {
-            Colours { fill: s::WARN_BG, edge: s::WARN, icon: Icon::Warning, title: s::WARN_TITLE, text: s::WARN_TEXT }
-        }
-        MessageLevel::Error => {
-            Colours { fill: s::ERROR_BG, edge: s::ERROR, icon: Icon::Error, title: s::ERROR_TITLE, text: s::ERROR_TEXT }
-        }
+        MessageLevel::Info => base(s::INFO_BG, s::INFO, Icon::Info, s::TEXT, s::INFO_TEXT),
+        MessageLevel::Warning => Colours {
+            button: s::WARN_BUTTON,
+            button_hover: s::WARN_BUTTON_HOVER,
+            ..base(s::WARN_BG, s::WARN, Icon::Warning, s::WARN_TITLE, s::WARN_TEXT)
+        },
+        MessageLevel::Error => base(s::ERROR_BG, s::ERROR, Icon::Error, s::ERROR_TITLE, s::ERROR_TEXT),
     }
 }
 
-/// Message box: icon, title in bold, the text below (already wrapped by [`MessageBox::new`]).
-pub fn message(p: &Painter, rect: Rect, message: &MessageBox) {
+/// Message box: icon, title in bold, the text below (already wrapped), and the « Choisir une autre
+/// touche » button of a refused hotkey. Returns `true` when that button is clicked.
+pub fn message(ui: &Ui, p: &Painter, rect: Rect, id: Id, message: &MessageBox) -> bool {
     let look = colours(message.level);
     p.rect(rect, 8, look.fill, Stroke::new(1.0, look.edge), StrokeKind::Inside);
     let icon = Rect::from_min_size(rect.min + vec2(11.0, 12.0), vec2(18.0, 18.0));
@@ -317,4 +351,14 @@ pub fn message(p: &Painter, rect: Rect, message: &MessageBox) {
         text::put(p, &galley, left, top, s::LINE_MESSAGE);
         top += s::LINE_MESSAGE;
     }
+    if message.retry.is_none() {
+        return false;
+    }
+    let width = (10.0 + text::width(RETRY_LABEL, 12.0, s::SEMIBOLD) + 10.0).ceil();
+    let button = Rect::from_min_size(pos2(left, top + 8.0), vec2(width, 28.0));
+    let response = clickable(ui, button, id.with("autre-touche"), RETRY_LABEL, 6);
+    let fill = state_fill(&response, look.button, look.button_hover, look.button_hover);
+    p.rect(button, 6, fill, Stroke::new(1.0, look.edge), StrokeKind::Inside);
+    text::draw(p, RETRY_LABEL, 12.0, s::SEMIBOLD, look.title, button.left() + 10.0, button.top(), 28.0);
+    response.clicked()
 }

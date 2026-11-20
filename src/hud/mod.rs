@@ -30,7 +30,9 @@ use std::time::Duration;
 
 use eframe::egui::{self, CursorIcon, Id, Painter, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
-use crate::contract::{HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, MessageLevel, MouseButton};
+use crate::contract::{
+    HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, MessageKind, MessageLevel, MouseButton,
+};
 use icons::Icon;
 use parts::{IconButton, KEY_HEIGHT, KeyLook, MessageBox};
 use style as s;
@@ -92,9 +94,9 @@ enum Block {
     Row(usize),
     /// Why macro `i` cannot run.
     Notice(MessageBox),
-    /// Settings of macro `i`, with the current message.
+    /// Settings of macro `i`, with the current message when it concerns that macro.
     Options(usize, Option<MessageBox>),
-    /// The current message, when no settings are unfolded.
+    /// The current message, below the macros.
     Message(MessageBox),
 }
 
@@ -114,11 +116,26 @@ struct Layout<'a> {
 impl<'a> Layout<'a> {
     fn new(state: &'a HudState, remembered: Option<MacroId>) -> Self {
         let usable = |id: MacroId| state.macros.iter().position(|m| m.id == id && m.available);
-        // Settings show while their macro waits for a hotkey, else when the user unfolded them.
-        let open = state.capturing.and_then(usable).or_else(|| remembered.and_then(usable));
+        // A refused hotkey keeps its macro's settings open, like the capture that led to it.
+        let refused = state
+            .message
+            .as_ref()
+            .filter(|m| matches!(m.kind, MessageKind::HotkeyRefused { .. }))
+            .and_then(|m| m.about);
+        // Settings show while their macro waits for a hotkey or just had one refused, else when the
+        // user unfolded them.
+        let open = state
+            .capturing
+            .and_then(usable)
+            .or_else(|| refused.and_then(usable))
+            .or_else(|| remembered.and_then(usable));
         let mut layout = Layout { state, open, blocks: Vec::new(), chip_width: 0.0, bubble: None, size: Vec2::ZERO };
+        // « Choisir une autre touche » only for a macro that can take a new hotkey.
         let message_box = |width: f32| {
-            state.message.as_ref().map(|m| MessageBox::new(m.level, parts::level_title(m.level), &m.text, width))
+            state
+                .message
+                .as_ref()
+                .map(|m| MessageBox::from_contract(m, m.about.filter(|&id| usable(id).is_some()), width))
         };
         if state.collapsed {
             layout.chip_width = chip_width(main_macro(state));
@@ -131,6 +148,9 @@ impl<'a> Layout<'a> {
             layout.size = size;
             return layout;
         }
+        // The message sits in the settings of the macro it concerns when they are open, else below.
+        let open_id = open.map(|i| state.macros[i].id);
+        let in_settings = state.message.as_ref().is_some_and(|m| m.about.is_some() && m.about == open_id);
         for (i, view) in state.macros.iter().enumerate() {
             layout.blocks.push((Block::Row(i), s::ROW_HEIGHT));
             if let MacroStatus::Unavailable(reason) = &view.status {
@@ -139,14 +159,12 @@ impl<'a> Layout<'a> {
                 layout.blocks.push((Block::Notice(notice), height));
             }
             if open == Some(i) {
-                let message = message_box(CONTENT_WIDTH);
+                let message = if in_settings { message_box(CONTENT_WIDTH) } else { None };
                 let height = options_height(state.capturing == Some(view.id), message.as_ref());
                 layout.blocks.push((Block::Options(i, message), height));
             }
         }
-        if open.is_none()
-            && let Some(message) = message_box(CONTENT_WIDTH)
-        {
+        if !in_settings && let Some(message) = message_box(CONTENT_WIDTH) {
             let height = framed_height(&message);
             layout.blocks.push((Block::Message(message), height));
         }
@@ -283,7 +301,11 @@ fn paint_panel(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: 
             Block::Notice(message) | Block::Message(message) => {
                 parts::block(&p, area, s::OPTIONS, s::ROW_LINE, last);
                 let rect = Rect::from_min_size(area.min + vec2(12.0, 8.0), vec2(CONTENT_WIDTH, message.height()));
-                parts::message(&p, rect, message);
+                if parts::message(ui, &p, rect, id.with(("message", k)), message)
+                    && let Some(macro_id) = message.retry
+                {
+                    actions.push(HudAction::StartCapture(macro_id));
+                }
             }
         }
         top += height;
@@ -502,11 +524,17 @@ fn paint_options(
 
     if let Some(message) = message {
         y += 8.0;
-        parts::message(p, Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, message.height())), message);
+        let rect = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, message.height()));
+        if parts::message(ui, p, rect, id.with("message"), message)
+            && let Some(macro_id) = message.retry
+        {
+            actions.push(HudAction::StartCapture(macro_id));
+        }
     }
 }
 
-/// Folded: the pill, and under it the current message.
+/// Folded: the pill, and under it the current message. « Choisir une autre touche » there also
+/// unfolds the HUD, so that « Appuie sur une touche… » shows.
 fn paint_folded(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: &mut Vec<HudAction>) {
     let p = ui.painter().clone();
     let chip = Rect::from_min_size(rect.min, vec2(layout.chip_width + 2.0, s::CHIP_HEIGHT + 2.0));
@@ -517,7 +545,13 @@ fn paint_folded(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions:
         if shadow {
             p.add(s::SHADOW.as_shape(outer.shrink(1.0), s::RADIUS));
         }
-        parts::message(&p, outer.shrink(1.0), message);
+        let id = ui.make_persistent_id("macrohud-message-replie");
+        if parts::message(ui, &p, outer.shrink(1.0), id, message)
+            && let Some(macro_id) = message.retry
+        {
+            actions.push(HudAction::SetCollapsed(false));
+            actions.push(HudAction::StartCapture(macro_id));
+        }
         p.rect_stroke(outer, s::RADIUS + 1, Stroke::new(1.0, s::RING), StrokeKind::Inside);
     }
 }

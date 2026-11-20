@@ -66,6 +66,8 @@ pub const WARN: Color32 = rgb(0xffb547);
 pub const WARN_BG: Color32 = rgb(0x2b2112);
 pub const WARN_TITLE: Color32 = rgb(0xfff1d6);
 pub const WARN_TEXT: Color32 = rgb(0xffe2b0);
+pub const WARN_BUTTON: Color32 = rgb(0x3a2c14);
+pub const WARN_BUTTON_HOVER: Color32 = rgb(0x4d3a1a);
 /// The « ! » inside the warning sign.
 pub const SIGN_INK: Color32 = rgb(0x1a1206);
 pub const ERROR: Color32 = rgb(0xff6b6b);
