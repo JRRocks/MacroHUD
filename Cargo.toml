@@ -16,8 +16,12 @@ serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+# The window eframe creates for the HUD (the same winit as eframe's, nothing more enabled): to take
+# away the frame Windows draws around a borderless window (shadow, 1 px band, rounded corners).
+winit = { version = "0.30.13", default-features = false }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_Console",

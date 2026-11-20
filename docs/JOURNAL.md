@@ -21,6 +21,55 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Correctif 3 : plus de liseré autour du HUD
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, après le correctif 2 ; puis le commit vide
+  `[ETAPE-FINIE programmation-correctif-3]`. L'exécutable à essayer est l'artefact de la CI de ce
+  dernier commit (la branche « visuel » n'y est pas fusionnée : la session maître réunit les deux).
+- **Objectif** : le dernier point de P1.9 côté programmation : le liseré sombre autour de la fenêtre
+  du HUD (D-16), dont la session « visuel » a trouvé la cause (son journal, `a3d907e`, point 2).
+- **Réalisé** :
+  - **Cause vérifiée dans le code des bibliothèques** (versions de `Cargo.lock`) : egui-winit 0.37
+    demande à winit, sous Windows, l'« ombre de fenêtre sans bordure » pour toute fenêtre sans
+    décorations et hors plein écran ; winit 0.30.13 la fait en laissant une bande d'1 px en haut de la
+    fenêtre hors de la zone où dessine le HUD (sa documentation le dit : « a thin 1px line on the
+    top ») ; Windows dessine alors autour de la fenêtre son cadre : ombre, et sous Windows 11 sa
+    bordure d'1 px et ses propres coins arrondis, qui assombrissent ceux du HUD. Rien de cela ne vient
+    de `src/hud/`.
+  - **Correction**, dans la couche Windows (`src/platform/windows.rs`, à la création de la fenêtre du
+    HUD, avant son premier affichage) plutôt que dans `src/app.rs` comme proposé : c'est là que vit
+    déjà le code propre à la fenêtre du HUD, et `src/app.rs` reste sans code réservé à Windows.
+    Trois réglages : plus d'ombre (par winit lui-même, car c'est lui qui en tient compte pour placer
+    la zone de dessin : il recalcule le cadre aussitôt), plus de bordure de Windows 11 et plus d'arrondi
+    de Windows (directement auprès du gestionnaire de fenêtres de Windows, pour lire sa réponse). La
+    transparence des coins vient d'un autre réglage et ne change pas. Dépendance ajoutée pour Windows :
+    `winit` 0.30.13, la même qu'eframe, sans rien activer de plus (aucun paquet nouveau dans
+    `Cargo.lock`) ; fonction `Win32_Graphics_Dwm` de `windows-sys`.
+  - **De quoi le voir au prochain test** : `macrohud.log` écrit à l'ouverture « Fenêtre du HUD : ombre
+    de Windows : retirée ; bordure de Windows 11 : retirée ; coins arrondis par Windows : non ; zone
+    dessinée par le HUD : toute la fenêtre. » Si Windows refuse un réglage, la ligne donne son code
+    (Windows 10 refuse les deux derniers, il n'a ni bordure ni arrondi à retirer). Si le liseré reste
+    alors que la ligne dit tout cela, il vient d'ailleurs : rapporter la ligne et une capture (dans
+    `essais-prives/`).
+  - Aucun fichier de `src/hud/` modifié.
+- **Décisions** (choix technique, à numéroter par la session maître si elle le retient) : Windows ne
+  dessine rien autour du HUD (ni ombre, ni bordure, ni arrondi) ; le HUD dessine seul son contour.
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 103 tests OK sous Linux. Pour
+  Windows seulement (CI) : le texte de la ligne du journal d'exécution, réglages acceptés ou refusés.
+  - CI, exécution n° 16 (commit `790ca3c`, le code de ce correctif) : tout vert. Windows : clippy ;
+    111 tests ; compilation release avec `Cargo.lock` tel quel (`--locked`) ; `MacroHUD.0.1.16.exe
+    --version` répond « MacroHUD 0.1.16 ». Le commit vide qui suit refait tout et donne l'exécutable
+    à essayer.
+- **Non vérifié sur le PC** : R26 (plus de liseré, coins transparents, ligne du journal) ; R17 au-dessus
+  d'un jeu.
+- **Problèmes et dette** : si un jour le HUD demande à egui de changer ses décorations
+  (`ViewportCommand::Decorations`), egui-winit redemanderait l'ombre : le commentaire du code le dit.
+- **Prochaine étape** : passage 3 sur le PC (R24 à R26, avec halte D-14), avec la branche « visuel ».
+
+---
+
 ## 2026-11-20 · Correctif 2 du HUD : l'encadré « Raccourci refusé » de la maquette
 
 - **Session** : visuel
