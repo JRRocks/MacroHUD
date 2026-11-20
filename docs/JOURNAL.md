@@ -21,6 +21,28 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Aperçu de « Multi-clic » : piste A choisie
+
+- **Session** : maître
+- **Branche et commit** : `integration/passage-3`, commit de documentation (`[skip ci]`). Moteur sur
+  `claude/gifted-hypatia-g84kg1` (`cdd49f3`, CI n° 23 verte, artefact `MacroHUD.0.1.23`) ; aperçu
+  sur `claude/gifted-turing-0izrcw` (`58af91a`).
+- **Objectif** : faire choisir l'aperçu du HUD avant tout code (P2.2).
+- **Réalisé** :
+  - Moteur P2.1 reçu de la session « programmation » ; sa question « à trancher » (un clic sur le HUD
+    pendant le multi-clic) posée à l'utilisateur avec l'aperçu.
+  - Aperçu `maquettes/multi-clic/apercu.html` regardé (piste A : réglages ouverts, en pause), puis
+    envoyé à l'utilisateur ; quatre questions.
+  - Réponses : « A · Curseur » ; « Active · gauche, 10/s » ; « Oui, En pause · souris ici » ; « Oui,
+    il agit » ; plage 1–15 non changée.
+- **Décisions** : D-26, D-27 (utilisateur).
+- **Vérifications** : CI n° 23 (`cdd49f3`) : tests Linux et Windows, exécutable : vert. Contrôle
+  « dépôt public » avant le commit.
+- **Non vérifié sur le PC** : le multi-clic (R27 à R34) et les corrections (R24 à R26), au passage 3.
+- **Prochaine étape** : la session « visuel » code la piste A sur le moteur (P2.3) ; la session
+  « programmation » applique D-27 ; puis réunion sur `integration/passage-3`, CI, passage 3 sur le
+  PC, lancé seul quand le code est prêt (D-13), avec la halte des autres sessions (D-14).
+
 ## 2026-11-20 · Aperçu du HUD avec « Multi-clic » : trois façons de régler la rapidité
 
 - **Session** : visuel
