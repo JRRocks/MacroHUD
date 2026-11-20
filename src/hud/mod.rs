@@ -200,14 +200,13 @@ fn chip_width(main: Option<&MacroView>) -> f32 {
     (width + 24.0 + 4.0 + 1.0).ceil()
 }
 
-/// « bouton gauche », « bouton droit », « bouton milieu »: the selector's word, and short enough
-/// for the state line (« bouton du milieu » would be cut).
-fn held_button(view: &MacroView) -> &'static str {
+/// The held button in one word, the selector's: « gauche », « droit », « milieu ».
+fn button_word(view: &MacroView) -> &'static str {
     let MacroOptions::HoldClick { button } = view.options;
     match button {
-        MouseButton::Left => "bouton gauche",
-        MouseButton::Right => "bouton droit",
-        MouseButton::Middle => "bouton milieu",
+        MouseButton::Left => "gauche",
+        MouseButton::Right => "droit",
+        MouseButton::Middle => "milieu",
     }
 }
 
@@ -218,16 +217,18 @@ fn kind_icon(view: &MacroView) -> Icon {
     }
 }
 
-/// Icon, words and weight of the state line under a macro's name. « Active » does not say
-/// « enfoncé »: from the HUD, the button is pressed 3 s after « Activer » (the message says so).
+/// Icon, words and weight of the state line under a macro's name, as on the mock-up (D-16):
+/// « Arrêtée · bouton gauche », « Active · gauche enfoncé ». During the 3 s after « Activer » the
+/// engine keeps the macro « arrêtée » and counts down in a message, so « enfoncé » is always true.
 fn state_line(view: &MacroView) -> (Option<Icon>, String, f32) {
     if !view.available {
         return (None, "À venir".to_owned(), s::REGULAR);
     }
+    let button = button_word(view);
     match view.status {
         MacroStatus::Unavailable(_) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
-        MacroStatus::Active => (Some(Icon::Dot), format!("Active · {}", held_button(view)), s::SEMIBOLD),
-        MacroStatus::Stopped => (Some(Icon::Stop), format!("Arrêtée · {}", held_button(view)), s::REGULAR),
+        MacroStatus::Active => (Some(Icon::Dot), format!("Active · {button} enfoncé"), s::SEMIBOLD),
+        MacroStatus::Stopped => (Some(Icon::Stop), format!("Arrêtée · bouton {button}"), s::REGULAR),
     }
 }
 

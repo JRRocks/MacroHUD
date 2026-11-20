@@ -21,6 +21,56 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Correctif 1 du HUD : ligne active comme la maquette, origine du liseré
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw`, avancée rapide sur `main` (`8baf82f`), puis
+  commit « Correctif 1 du HUD : ligne active comme la maquette, liseré expliqué », puis le marqueur vide
+  `[ETAPE-FINIE visuel-correctif-1]`.
+- **Objectif** : P1.9, points 1 et 2 de D-16 ; le point 3 (raccourci refusé) attend la branche
+  « programmation » (`[ETAPE-FINIE programmation-correctif-2]`).
+- **Réalisé** :
+  1. **Ligne active** : « Active · gauche enfoncé » (« droit enfoncé », « milieu enfoncé »), comme la
+     maquette ; la ligne arrêtée reste « Arrêtée · bouton gauche ». Textes d'exemple des rendus
+     alignés sur le moteur : décompte « Activation dans 3 s : place la souris… » avec la ligne
+     « Arrêtée », « Sors la souris du HUD… ».
+  2. **Liseré autour de la fenêtre : il ne vient pas du HUD.** Nouveau test : dans la fenêtre (sans
+     ombre), les pixels des coins hors de la forme arrondie restent entièrement transparents ; la seule
+     bordure dessinée est l'anneau noir de la maquette. Cause : egui-winit 0.37 demande d'office à
+     winit, sous Windows, l'« ombre de fenêtre sans bordure » (`with_undecorated_shadow(true)` pour
+     toute fenêtre sans décorations, `egui-winit/src/lib.rs`) ; Windows dessine alors autour de la
+     fenêtre son ombre, son liseré d'1 px (Windows 11) et ses propres coins arrondis, qui assombrissent
+     le fond au coin, et winit réserve une bande d'1 px en haut (documenté par winit). `src/hud/` ne
+     peut pas l'éteindre : egui ne donne pas accès à la fenêtre native. **À faire par la session
+     « programmation »** (hors de mon périmètre) :
+     - `Cargo.toml`, dépendances Windows : `winit = "0.30"` (déjà dans `Cargo.lock` : 0.30.13, celle
+       d'eframe) ;
+     - `src/app.rs`, dans `HudApp::new` :
+
+       ```rust
+       #[cfg(windows)]
+       if let Some(window) = cc.winit_window() {
+           use winit::platform::windows::{CornerPreference, WindowExtWindows as _};
+           window.set_undecorated_shadow(false); // no system shadow, no 1 px band at the top
+           window.set_border_color(None); // Windows 11: no 1 px border
+           window.set_corner_preference(CornerPreference::DoNotRound); // the HUD rounds itself
+       }
+       ```
+
+     La transparence (coins du HUD) passe par un autre réglage et n'en dépend pas.
+- **Décisions** : aucune (retour à D-12 et D-16 pour la ligne active).
+- **Vérifications** : `cargo fmt --check` ; `cargo clippy --all-targets --locked -- -D warnings` sous
+  Linux et pour `x86_64-pc-windows-msvc` : sans remarque ; `cargo test --locked` : 101 tests verts, dont
+  12 du HUD (le nouveau sur les coins ; les lignes d'état tiennent sans « … » pour les trois boutons).
+  Rendus régénérés dans `maquettes/rendu-egui/` : deux exécutions identiques au bit près ; hors de la
+  ligne active et des textes changés, écarts d'arrondi de 1/255 sur quelques pixels.
+- **Non vérifié sur le PC** : la ligne active (R18) ; le liseré (R17) reste tant que le correctif
+  ci-dessus n'est pas fait.
+- **Problèmes et dette** : point 3 de P1.9 (encadré « Raccourci refusé ») en attente du contrat.
+- **Prochaine étape** : point 3 dès que la branche « programmation » porte le contrat complété.
+
+---
+
 ## 2026-11-20 · Tests sur le PC et première livraison : MacroHUD 0.1.10
 
 - **Session** : maître

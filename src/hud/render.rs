@@ -430,6 +430,27 @@ fn renders_the_views_and_the_situations() {
     set_open_macro(None);
 }
 
+/// In the window (no shadow), the HUD paints nothing outside its rounded shape: the corner pixels
+/// stay fully transparent. A line or a darkening around the window comes from the system (D-16).
+#[test]
+fn nothing_is_painted_outside_the_rounded_shape() {
+    let mut renderer = Renderer::new();
+    for view in mockup_views() {
+        let size = view.size();
+        let image = renderer.render(size, 1.0, Color32::TRANSPARENT, &mut |ui| {
+            set_open_macro(view.open);
+            paint(ui, &view.state, false);
+        });
+        let (w, h) = (image.width - 1, image.height - 1);
+        for (x, y) in [(0, 0), (w, 0), (0, h), (w, h), (1, 1), (w - 1, 1), (1, h - 1), (w - 1, h - 1)] {
+            assert_eq!(image.pixel(x, y).a(), 0, "vue {}, pixel ({x}, {y})", view.key);
+        }
+        // The black ring of the mock-up is the outermost pixel row, opaque.
+        assert_eq!(image.pixel(image.width / 2, 0), Color32::BLACK, "vue {}", view.key);
+    }
+    set_open_macro(None);
+}
+
 // Interaction: real pointer events through egui ------------------------------------------------
 
 fn press(pos: Pos2, pressed: bool) -> Event {
@@ -578,7 +599,7 @@ fn a_long_hotkey_is_cut_not_the_panel() {
 fn folded_messages_show_under_the_pill() {
     let state = with(|s| {
         s.collapsed = true;
-        s.message = Some(Message::new(MessageLevel::Warning, "Sortez la souris du HUD avant d'appuyer sur F8."));
+        s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."));
     });
     set_open_macro(None);
     let size = window_size(&state);
@@ -756,12 +777,11 @@ fn comparison_sheets() {
     // The situations of the contract, then the two cases the engine explains with a message.
     let mut situations = samples();
     situations.push((
-        "après « Activer » : délai de 3 s",
+        "après « Activer » : décompte de 3 s",
         with(|s| {
-            s.macros[0].status = MacroStatus::Active;
             s.message = Some(Message::new(
                 MessageLevel::Info,
-                "Le bouton gauche sera enfoncé dans 3 secondes : placez la souris là où il doit agir.",
+                "Activation dans 3 s : place la souris là où le clic doit rester enfoncé.",
             ));
         }),
     ));
@@ -769,7 +789,7 @@ fn comparison_sheets() {
         "F8 avec la souris sur le HUD replié",
         with(|s| {
             s.collapsed = true;
-            s.message = Some(Message::new(MessageLevel::Warning, "Sortez la souris du HUD avant d'appuyer sur F8."));
+            s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."));
         }),
     ));
     let tiles: Vec<Tile> = situations
@@ -783,7 +803,7 @@ fn comparison_sheets() {
         })
         .collect();
     let idea = "Chaque situation de contract::samples(), telle que le HUD la dessine, puis les deux cas que le \
-                moteur explique par un message : le délai de 3 s après « Activer », et F8 refusé avec la souris \
+                moteur explique par un message : le décompte de 3 s après « Activer », et F8 refusé avec la souris \
                 sur le HUD (ici replié).";
     let image = sheet(&mut renderer, "+", "Toutes les situations du contrat", idea, &tiles);
     image.save_png(&dir.join("situations-egui.png"));
