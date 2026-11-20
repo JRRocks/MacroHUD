@@ -96,6 +96,12 @@ pub mod msg {
     pub const LLMHF_INJECTED: u32 = 0x01;
     /// `MSLLHOOKSTRUCT.flags`: injected from a process with a lower integrity level.
     pub const LLMHF_LOWER_IL_INJECTED: u32 = 0x02;
+    /// `wParam` flags of a mouse message: buttons and keys down.
+    pub const MK_LBUTTON: usize = 0x0001;
+    pub const MK_RBUTTON: usize = 0x0002;
+    pub const MK_SHIFT: usize = 0x0004;
+    pub const MK_CONTROL: usize = 0x0008;
+    pub const MK_MBUTTON: usize = 0x0010;
 }
 
 /// The button and edge of a low-level mouse hook message; `None` for moves, wheel, side buttons.
@@ -114,6 +120,73 @@ pub fn button_event(message: u32) -> Option<(MouseButton, Edge)> {
 /// Whether a low-level mouse hook event was injected rather than made by the user's hand.
 pub fn is_injected(flags: u32) -> bool {
     flags & (msg::LLMHF_INJECTED | msg::LLMHF_LOWER_IL_INJECTED) != 0
+}
+
+// --- Delivery of a release ---------------------------------------------------------------------
+
+/// Where things stand when a held button is released, for [`release_reaches`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseScene {
+    /// Thread of the window that received the press (0: unknown).
+    pub press_thread: u32,
+    /// Thread of the window under the pointer now.
+    pub pointer_thread: u32,
+    /// The press thread holds the mouse capture (`SetCapture`).
+    pub press_thread_captures: bool,
+    /// The press thread owns the foreground window.
+    pub press_thread_foreground: bool,
+}
+
+/// Whether the release Windows delivers by itself reaches the application that received the press.
+///
+/// Windows sends a button message to the window under the pointer, unless a window captured the
+/// mouse (`SetCapture`), and a capture only follows the pointer everywhere while its window is in
+/// the foreground. An application that did not capture the mouse (Paint does, many do not) thus
+/// never sees the release when the pointer is elsewhere at that moment, on the HUD for instance:
+/// the release must then be sent to it (P1.8).
+pub fn release_reaches(scene: &ReleaseScene) -> bool {
+    scene.press_thread == 0
+        || scene.pointer_thread == scene.press_thread
+        || (scene.press_thread_captures && scene.press_thread_foreground)
+}
+
+/// The window message of a button's release.
+pub fn release_message(button: MouseButton) -> u32 {
+    match button {
+        MouseButton::Left => msg::WM_LBUTTONUP,
+        MouseButton::Right => msg::WM_RBUTTONUP,
+        MouseButton::Middle => msg::WM_MBUTTONUP,
+    }
+}
+
+/// `wParam` of a mouse message: the buttons still down, Shift and Ctrl.
+pub fn key_flags(down: ButtonSet, shift: bool, ctrl: bool) -> usize {
+    let mut flags = 0;
+    for (on, flag) in [
+        (down.contains(MouseButton::Left), msg::MK_LBUTTON),
+        (down.contains(MouseButton::Right), msg::MK_RBUTTON),
+        (down.contains(MouseButton::Middle), msg::MK_MBUTTON),
+        (shift, msg::MK_SHIFT),
+        (ctrl, msg::MK_CONTROL),
+    ] {
+        if on {
+            flags |= flag;
+        }
+    }
+    flags
+}
+
+/// `lParam` of a mouse message: a point in client coordinates, each on 16 signed bits (MAKELPARAM).
+pub fn pack_point(x: i32, y: i32) -> isize {
+    (((y as u16 as u32) << 16) | (x as u16 as u32)) as isize
+}
+
+/// The point of a release sent to the press window: the pointer's (client coordinates), brought
+/// back inside the client area of `width` × `height`. Frameworks that look for the element under
+/// the point (WPF...) then find one; a drawing application ends its stroke near where the pointer
+/// left it.
+pub fn point_inside(x: i32, y: i32, width: i32, height: i32) -> (i32, i32) {
+    (x.clamp(0, (width - 1).max(0)), y.clamp(0, (height - 1).max(0)))
 }
 
 /// What to do with one button event.
@@ -356,6 +429,47 @@ mod tests {
         assert!(is_injected(msg::LLMHF_INJECTED));
         assert!(is_injected(msg::LLMHF_INJECTED | msg::LLMHF_LOWER_IL_INJECTED));
         assert!(!is_injected(0));
+    }
+
+    #[test]
+    fn a_release_reaches_the_press_window_only_under_the_pointer_or_by_capture() {
+        let app = 10;
+        let hud = 20;
+        let scene = |pointer_thread, captures, foreground| ReleaseScene {
+            press_thread: app,
+            pointer_thread,
+            press_thread_captures: captures,
+            press_thread_foreground: foreground,
+        };
+        // F8 with the pointer still on the window that got the press.
+        assert!(release_reaches(&scene(app, false, false)));
+        // Pointer on the HUD: only a capture in the foreground brings the release (Paint)...
+        assert!(release_reaches(&scene(hud, true, true)));
+        // ...not a window without capture (the PC test's window), nor a capture in the background.
+        assert!(!release_reaches(&scene(hud, false, true)));
+        assert!(!release_reaches(&scene(hud, true, false)));
+        assert!(!release_reaches(&scene(hud, false, false)));
+        // Press window unknown: nothing to send.
+        assert!(release_reaches(&ReleaseScene { press_thread: 0, ..scene(hud, false, false) }));
+    }
+
+    #[test]
+    fn release_messages_are_built_like_windows_ones() {
+        assert_eq!(release_message(Left), msg::WM_LBUTTONUP);
+        assert_eq!(release_message(Right), msg::WM_RBUTTONUP);
+        assert_eq!(release_message(Middle), msg::WM_MBUTTONUP);
+        assert_eq!(key_flags(ButtonSet::EMPTY, false, false), 0);
+        assert_eq!(key_flags(ButtonSet::only(Left), true, false), msg::MK_LBUTTON | msg::MK_SHIFT);
+        assert_eq!(key_flags(ButtonSet::only(Middle).with(Right), false, true), 0x0010 | 0x0002 | 0x0008);
+        // MAKELPARAM: x in the low word, y in the high word, negative values on 16 bits.
+        assert_eq!(pack_point(10, 20), 0x0014_000A);
+        assert_eq!(pack_point(-1, 5), 0x0005_FFFF);
+        assert_eq!(pack_point(3, -2), 0xFFFE_0003_u32 as isize);
+        // The point stays where it is inside the window, and comes back to its edge from outside.
+        assert_eq!(point_inside(40, 30, 800, 600), (40, 30));
+        assert_eq!(point_inside(-250, 30, 800, 600), (0, 30));
+        assert_eq!(point_inside(900, 700, 800, 600), (799, 599));
+        assert_eq!(point_inside(5, 5, 0, 0), (0, 0));
     }
 
     #[test]

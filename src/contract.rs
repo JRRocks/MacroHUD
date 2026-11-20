@@ -87,16 +87,48 @@ pub enum MessageLevel {
     Error,
 }
 
+/// The sort of a one-off message, for the HUD to show it the right way (D-16).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageKind {
+    /// Any message: shown with a title from its level.
+    General,
+    /// « Raccourci refusé »: `key` (« Alt+Tab ») was refused as the new hotkey of the macro the
+    /// message concerns, whose hotkey does not change (the text says so). Always a warning. The
+    /// HUD offers « Choisir une autre touche », that is [`HudAction::StartCapture`] for that macro.
+    HotkeyRefused { key: String },
+}
+
 /// A one-off message (hotkey saved, hotkey refused, error...), in French.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub level: MessageLevel,
     pub text: String,
+    /// The macro the message concerns, if it concerns one.
+    pub about: Option<MacroId>,
+    pub kind: MessageKind,
 }
 
 impl Message {
+    /// A general message, about no macro in particular.
     pub fn new(level: MessageLevel, text: impl Into<String>) -> Self {
-        Message { level, text: text.into() }
+        Message { level, text: text.into(), about: None, kind: MessageKind::General }
+    }
+
+    /// The same message, about macro `id`.
+    pub fn concerning(mut self, id: MacroId) -> Self {
+        self.about = Some(id);
+        self
+    }
+
+    /// « Raccourci refusé » for macro `id`: `key` was refused; `text` says why, shortly, and which
+    /// hotkey stays (« Alt+Tab est déjà pris par Windows. F8 reste actif. »).
+    pub fn hotkey_refused(id: MacroId, key: impl Into<String>, text: impl Into<String>) -> Self {
+        Message {
+            level: MessageLevel::Warning,
+            text: text.into(),
+            about: Some(id),
+            kind: MessageKind::HotkeyRefused { key: key.into() },
+        }
     }
 }
 
@@ -194,14 +226,29 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
         (
             "message d'information",
             with(&|s| {
-                s.message =
-                    Some(Message::new(MessageLevel::Info, "Nouveau raccourci de « Maintenir le clic » : Ctrl+Alt+M."))
+                s.message = Some(
+                    Message::new(MessageLevel::Info, "Nouveau raccourci de « Maintenir le clic » : Ctrl+Alt+M.")
+                        .concerning(MacroId::HOLD_CLICK),
+                )
             }),
         ),
         (
             "avertissement",
             with(&|s| {
-                s.message = Some(Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8."))
+                s.message = Some(
+                    Message::new(MessageLevel::Warning, "Sors la souris du HUD avant d'appuyer sur F8.")
+                        .concerning(MacroId::HOLD_CLICK),
+                )
+            }),
+        ),
+        (
+            "raccourci refusé",
+            with(&|s| {
+                s.message = Some(Message::hotkey_refused(
+                    MacroId::HOLD_CLICK,
+                    "Alt+Tab",
+                    "Alt+Tab est déjà pris par Windows. F8 reste actif.",
+                ))
             }),
         ),
         (
@@ -209,7 +256,18 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
             with(&|s| {
                 s.message = Some(Message::new(
                     MessageLevel::Error,
-                    "Ctrl+Alt+M est déjà pris par Windows ou par un autre programme. Le raccourci reste F8.",
+                    "Impossible de surveiller la souris (SetWindowsHookEx, erreur 5) : rien n'a été enfoncé.",
+                ))
+            }),
+        ),
+        (
+            "raccourci refusé, replié",
+            with(&|s| {
+                s.collapsed = true;
+                s.message = Some(Message::hotkey_refused(
+                    MacroId::HOLD_CLICK,
+                    "Ctrl+C",
+                    "Ctrl+C sert à copier. F8 reste actif.",
                 ))
             }),
         ),

@@ -21,6 +21,101 @@ Gabarit :
 
 ---
 
+## 2026-11-20 · Correctif 2 : le relâchement arrive à l'application, refus de raccourci plus courts
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, avancée rapide sur `main` (`8baf82f`,
+  livraison 0.1.10), puis le correctif, puis le commit vide `[ETAPE-FINIE programmation-correctif-2]`.
+  L'exécutable à essayer est l'artefact de la CI de ce dernier commit.
+- **Objectif** : P1.8 (D-15) ; la partie contrat et textes de P1.9 (D-16).
+- **Réalisé** :
+  1. **P1.8, la cause.** Une règle de Windows, la même qu'au correctif 1. Un message de la souris
+     (appui, relâchement) va à la fenêtre sous le curseur, sauf si une fenêtre a « capturé » la
+     souris (`SetCapture`, ce que font les logiciels de dessin pendant un trait) ; et une capture ne
+     reçoit toute la souris que si son programme est au premier plan : en arrière-plan, elle ne
+     reçoit que ce qui arrive sous le curseur (documentation de Windows, « Mouse Capture »). Le
+     relâchement que MacroHUD envoie par `SendInput` suit cette règle comme un vrai. Le bouton est
+     donc bien relâché pour Windows, mais le message « bouton relâché » part vers la fenêtre sous le
+     curseur. Lors d'un arrêt par le HUD, le curseur est sur le HUD : le relâchement va au HUD, et
+     l'application qui a reçu l'appui ne le voit jamais si elle n'a pas capturé la souris, ou si
+     elle n'est plus au premier plan (Alt+F4 sur le HUD : le HUD est passé devant). Avec F8 la
+     souris sur la fenêtre, la fenêtre sous le curseur est la bonne : le relâchement arrive.
+     **Ce qui le prouve déjà** : au passage 2, F8 la souris sur la fenêtre d'essai donne le
+     relâchement, l'arrêt par le HUD ne le donne pas (R10, R22) ; les outils de la session « test »
+     ont vu qu'un relâchement envoyé le curseur hors de la fenêtre de l'appui ne lui arrive pas, et
+     que pendant un maintien un clic sur une autre fenêtre ne parvient pas à celle-ci (c'est la
+     capture tenue par l'application au premier plan) ; tout cela suit la règle ci-dessus.
+     **Ce que seul le PC peut prouver** : que dans chaque arrêt qui échouait, le curseur était sur une
+     fenêtre d'un autre programme (le HUD) et que l'application de l'appui n'avait pas de capture ou
+     n'était pas au premier plan. `macrohud.log` le montre maintenant (point 3).
+  2. **P1.8, la correction.** À l'appui, MacroHUD retient la fenêtre qui le reçoit (celle sous le
+     curseur ; pour un bouton déjà tenu à la main et repris, celle qui a la capture, sinon celle sous
+     le curseur). Juste avant le relâchement, il regarde où est le curseur, si l'application de
+     l'appui tient la capture et si elle est au premier plan. Il relâche toujours le bouton comme
+     avant (`SendInput` : Windows et les jeux qui lisent l'état des boutons le voient relâché) ; et
+     quand Windows ne porterait pas ce relâchement à l'application, il lui envoie en plus le message
+     de relâchement (`WM_LBUTTONUP`, `WM_RBUTTONUP` ou `WM_MBUTTONUP`) directement, au point du
+     curseur ramené dans sa fenêtre. Quand Windows le lui porte, rien de plus : jamais deux
+     relâchements pour un arrêt. Tous les arrêts passent par là : F8, clic sur le HUD (« Arrêter »,
+     « Quitter », choix d'un autre bouton), Alt+F4, fermeture, plantage. Au plantage, le relâchement
+     reste la toute première chose faite, avant même ce coup d'œil aux fenêtres.
+  3. **De quoi le voir au prochain test** : `macrohud.log` écrit, à chaque appui, « Appui du bouton
+     droit : fenêtre sous le curseur 0x… « classe », fil … », et à chaque relâchement « Relâchement
+     du bouton droit : sous le curseur … ; fenêtre de l'appui …, capture de son fil : …, au premier
+     plan : oui ou non → … », qui finit par « le relâchement lui parvient », « relâchement envoyé
+     aussi à la fenêtre de l'appui », « fenêtre de l'appui fermée, rien à lui envoyer », « fenêtre
+     de l'appui inconnue » ou « envoi à la fenêtre de l'appui refusé (erreur N) ». Les fenêtres y
+     sont nommées par leur numéro, leur classe et leur fil, jamais par leur titre (qui peut être
+     privé) ; celle du HUD porte « (le HUD) ». Ce que le test doit regarder (R24) : pour chaque arrêt,
+     la fenêtre d'essai compte exactement un relâchement, et la ligne du journal dit par où il est
+     passé. Attendu : arrêt par le HUD avec la fenêtre d'essai, curseur « (le HUD) » et « capture de
+     son fil : aucune » ou « au premier plan : non », puis « envoyé aussi » ; F8 la souris sur la
+     fenêtre, « lui parvient ». Si la fenêtre ne compte rien alors que la ligne dit « lui
+     parvient », ma lecture de la règle est fausse ; si elle ne compte rien alors que la ligne dit
+     « envoyé aussi », la fenêtre lit la souris autrement. Dans les deux cas : rapporter la ligne.
+  4. **P1.9, contrat et textes** (D-16), dans `src/contract.rs` : un message dit la macro qu'il
+     concerne (`about`, vide pour un message général) et sa sorte (`kind`) : `General`, ou
+     `HotkeyRefused { key }` pour « Raccourci refusé », toujours un avertissement, avec la touche
+     refusée ; le bouton « Choisir une autre touche » du HUD est l'action existante `StartCapture`
+     de cette macro (aucune action nouvelle). Exemples ajoutés à `samples()` : « raccourci refusé »
+     (Alt+Tab) et « raccourci refusé, replié » (Ctrl+C). Le moteur dit la macro de chacun de ses
+     messages ; ses refus de raccourci passent d'erreur à avertissement, avec un texte court qui dit
+     la touche refusée et le raccourci qui reste : « Alt+Tab est déjà pris par Windows. F8 reste
+     actif. », « Ctrl+C sert à copier. F8 reste actif. », « Ctrl+Alt+E sert à écrire « € ». F8 reste
+     actif. », « F9 est déjà le raccourci de « … ». F8 reste actif. », « … est déjà pris par Windows
+     ou un autre programme. F8 reste actif. » (quand Windows refuse de l'enregistrer), « F12 seule
+     est réservée par Windows. », « M empêcherait d'écrire (ajoute Ctrl, Alt ou Win). », « Il faut
+     une touche en plus de Ctrl, Alt, Maj ou Win. » (avec « F8 reste actif. » quand un raccourci
+     reste).
+  - Aucun fichier de `src/hud/` modifié : il compile tel quel. Pour la session « visuel » :
+    l'encadré « Raccourci refusé » se reconnaît à `message.kind`, la touche refusée est dans `key`, le
+    bouton envoie `HudAction::StartCapture` de `message.about`. Les deux textes d'exemple de
+    `src/hud/render.rs` gardent l'ancienne formulation des refus.
+- **Décisions** (choix techniques, à numéroter par la session maître si elle les retient) :
+  - le relâchement est envoyé à la fenêtre de l'appui seulement quand Windows ne le lui porterait
+    pas, au point du curseur ramené dans cette fenêtre (les cadres qui cherchent l'élément sous le
+    point, comme WPF, en trouvent un ; un logiciel de dessin finit son trait près de l'endroit où le
+    curseur l'a quitté) ;
+  - un refus de raccourci est un avertissement, au texte court sur le modèle de la maquette.
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 103 tests OK sous Linux, dont
+  les nouveaux : la règle de Windows sur six cas (curseur sur la fenêtre de l'appui, sur le HUD
+  avec ou sans capture, au premier plan ou non, fenêtre de l'appui inconnue) ; le message de
+  relâchement (code, boutons et touches encore enfoncés, point, point ramené dans la fenêtre) ;
+  chaque message d'une macro la nomme, seuls les refus sont des « raccourci refusé » ; les textes
+  courts des refus. Pour Windows seulement (CI) : codes des messages, description d'un relâchement.
+  - CI, exécution n° 13 (commit `5ffa661`, le code de ce correctif) : tout vert. Windows : clippy ;
+    110 tests ; compilation release ; `MacroHUD.0.1.13.exe --version` répond « MacroHUD 0.1.13 ».
+    Le commit vide qui suit refait tout et donne l'exécutable à essayer.
+- **Non vérifié sur le PC** : R24 (P1.8, avec la preuve dans `macrohud.log`), R25 (textes des refus).
+- **Problèmes et dette** : un programme qui lit la souris autrement que par les messages de sa
+  fenêtre (bien des jeux) voit déjà le bouton relâché par `SendInput` ; le message envoyé en plus ne
+  lui sert à rien et ne le gêne pas.
+- **Prochaine étape** : passage 3 sur le PC (R24, R25, avec halte D-14) ; la session « visuel »
+  termine P1.9.
+
+---
+
 ## 2026-11-20 · Correctif 1 du HUD : ligne active comme la maquette, origine du liseré
 
 - **Session** : visuel
