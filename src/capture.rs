@@ -6,7 +6,14 @@
 //! shortcut (not even the current hotkey). It only swallows the release of a key whose press it
 //! swallowed, so no key ever stays stuck down for the system.
 
+use std::time::{Duration, Instant};
+
 use crate::hotkey::{Hotkey, Modifier, Modifiers, Vk, modifier_of, vk};
+
+/// Once the capture has ended, how long the releases of swallowed keys are waited for. After that
+/// they are given up: a release that never comes (the desktop changed in between, with Win+L or
+/// Ctrl+Alt+Suppr) must neither keep the keyboard hook in place nor swallow the key's next press.
+pub const RELEASE_WAIT: Duration = Duration::from_secs(10);
 
 /// How a capture ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,29 +45,37 @@ pub struct KeyCapture {
     held_at_start: Modifiers,
     /// Keys whose press was swallowed: their releases must be swallowed too.
     swallowed: Vec<Vk>,
-    finished: bool,
+    /// When the capture ended (a key, Échap, or [`KeyCapture::finish`]).
+    finished_at: Option<Instant>,
 }
 
 impl KeyCapture {
     pub fn new(held_at_start: Modifiers) -> Self {
-        KeyCapture { held_at_start, swallowed: Vec::new(), finished: false }
+        KeyCapture { held_at_start, swallowed: Vec::new(), finished_at: None }
     }
 
     /// Whether the capture still waits for a key.
     #[cfg(test)]
     pub fn is_capturing(&self) -> bool {
-        !self.finished
+        self.finished_at.is_none()
     }
 
     /// Whether keyboard events are still needed: capturing, or swallowed keys not released yet.
     pub fn needs_events(&self) -> bool {
-        !self.finished || !self.swallowed.is_empty()
+        self.finished_at.is_none() || !self.swallowed.is_empty()
     }
 
     /// Ends the capture without a result (cancelled from the HUD, or too long). Releases of keys
     /// already swallowed are still swallowed.
     pub fn finish(&mut self) {
-        self.finished = true;
+        if self.finished_at.is_none() {
+            self.finished_at = Some(Instant::now());
+        }
+    }
+
+    /// Whether the releases still awaited are given up (see [`RELEASE_WAIT`]).
+    pub fn expired(&self, now: Instant) -> bool {
+        self.finished_at.is_some_and(|at| now.saturating_duration_since(at) >= RELEASE_WAIT)
     }
 
     /// The modifiers held now, as far as the capture knows.
@@ -97,7 +112,7 @@ impl KeyCapture {
             }
             return Decision::PASS;
         }
-        if self.finished {
+        if self.finished_at.is_some() {
             // Auto-repeat of a swallowed key, still held: keep it away from the applications.
             return if self.swallowed.contains(&key) { Decision::SWALLOW } else { Decision::PASS };
         }
@@ -105,7 +120,7 @@ impl KeyCapture {
         if modifier_of(key).is_some() {
             return Decision::SWALLOW;
         }
-        self.finished = true;
+        self.finish();
         let outcome =
             if key == vk::ESCAPE { Outcome::Cancelled } else { Outcome::Chosen(Hotkey::new(self.modifiers(), key)) };
         Decision { swallow: true, outcome: Some(outcome) }
@@ -212,6 +227,21 @@ mod tests {
         assert!(c.on_key(vk::LCONTROL, false).swallow);
         assert!(!c.on_key(vk::KEY_B, false).swallow);
         assert!(!c.needs_events());
+    }
+
+    #[test]
+    fn releases_that_never_come_are_given_up() {
+        // Win+L: the session locks, and the releases happen on another desktop, out of the hook's sight.
+        let mut c = KeyCapture::new(Modifiers::NONE);
+        c.on_key(vk::LWIN, true);
+        let d = c.on_key(0x4C, true);
+        assert_eq!(d.outcome, Some(Outcome::Chosen(Hotkey::new(Modifiers::NONE.with(Modifier::Win), 0x4C))));
+        assert!(c.needs_events());
+        assert!(!c.expired(Instant::now()));
+        assert!(c.expired(Instant::now() + RELEASE_WAIT));
+        // A capture still waiting for its key never expires this way (the engine's timeout ends it).
+        let waiting = KeyCapture::new(Modifiers::NONE);
+        assert!(!waiting.expired(Instant::now() + RELEASE_WAIT * 10));
     }
 
     #[test]

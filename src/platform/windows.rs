@@ -529,7 +529,11 @@ fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: En
             },
             WM_TIMER => {
                 with_hooks(|s| {
-                    s.guard.expire(Instant::now());
+                    let now = Instant::now();
+                    if s.capture.as_ref().is_some_and(|c| c.expired(now)) {
+                        s.capture = None;
+                    }
+                    s.guard.expire(now);
                     s.refresh_mouse();
                     let _ = s.sync_mouse();
                     let _ = s.sync_keyboard();

@@ -47,7 +47,9 @@ Gabarit :
     `session-en-cours` resté dans `%APPDATA%\MacroHUD`).
   - Raccourcis : un par macro (`RegisterHotKey`, sans répétition), actifs sans le focus ; « Changer »
     dans le HUD capture la touche ou la combinaison suivante (crochet clavier pendant la capture
-    seulement ; Échap ou 10 s sans touche annulent) ; noms en français (« F8 », « Ctrl+Alt+M »,
+    seulement ; Échap ou 10 s sans touche annulent ; les touches tapées n'atteignent aucune
+    application, et un relâchement qui n'arrive jamais, après Win+L par exemple, n'est plus attendu
+    au-delà de 10 s) ; noms en français (« F8 », « Ctrl+Alt+M »,
     « Arrêt défil. », « Win+Maj+S »). Refus expliqués, l'ancien raccourci restant actif : déjà pris
     par Windows ou un autre programme, par une autre macro, touche de frappe sans Ctrl/Alt/Win,
     F12 seule, Alt+F4, Alt+Tab, Alt+Espace, Ctrl+C/X/V/Z/Y/A/S, combinaison qui écrit un caractère
@@ -90,7 +92,7 @@ Gabarit :
 - **Vérifications** :
   - `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` : OK.
     `cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` (depuis Linux) : OK.
-  - `cargo test` : 78 tests OK sous Linux (moteur avec un faux Windows : ordre surveillance → appui
+  - `cargo test` : 79 tests OK sous Linux (moteur avec un faux Windows : ordre surveillance → appui
     et relâche → fin de surveillance, vrai clic, changement de bouton, délai du HUD, conflits de
     raccourcis, indisponibilité, capture ; garde du clic ; capture clavier ; réglages abîmés ; HUD
     dessiné sans fenêtre pour chaque état de `samples()` ; rapport de plantage).
@@ -117,7 +119,9 @@ Gabarit :
   - en plein écran exclusif, aucun HUD ne peut s'afficher par-dessus (plein écran fenêtré seulement) ;
   - sans pilote OpenGL 2 (machine virtuelle sans carte graphique), la fenêtre ne s'ouvre pas : message
     clair dans ce cas ;
-  - sous Linux, MacroHUD se lance (pour la session « visuel ») mais souris et clavier sont simulés.
+  - sous Linux, MacroHUD se lance (pour la session « visuel ») mais souris et clavier sont simulés ;
+    dans un conteneur sans écran : `apt-get install -y libxkbcommon-x11-0 xvfb`, `Xvfb :97 &`, puis
+    `DISPLAY=:97 LIBGL_ALWAYS_SOFTWARE=1 cargo run` (et `import -window root capture.png` pour voir).
 - **Prochaine étape** : test sur le PC (P1.6) avec l'artefact de la CI ; maquettes (session « visuel »).
 
 ## 2026-11-20 · Démarrage de MacroHUD
