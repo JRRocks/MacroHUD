@@ -58,6 +58,10 @@ Gabarit :
 - **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
   Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 103 tests OK sous Linux. Pour
   Windows seulement (CI) : le texte de la ligne du journal d'exécution, réglages acceptés ou refusés.
+  - CI, exécution n° 16 (commit `790ca3c`, le code de ce correctif) : tout vert. Windows : clippy ;
+    111 tests ; compilation release avec `Cargo.lock` tel quel (`--locked`) ; `MacroHUD.0.1.16.exe
+    --version` répond « MacroHUD 0.1.16 ». Le commit vide qui suit refait tout et donne l'exécutable
+    à essayer.
 - **Non vérifié sur le PC** : R26 (plus de liseré, coins transparents, ligne du journal) ; R17 au-dessus
   d'un jeu.
 - **Problèmes et dette** : si un jour le HUD demande à egui de changer ses décorations
