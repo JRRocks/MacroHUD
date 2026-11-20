@@ -12,6 +12,8 @@ pub struct MacroId(pub &'static str);
 impl MacroId {
     /// « Maintenir le clic » (D-04).
     pub const HOLD_CLICK: MacroId = MacroId("maintenir-clic");
+    /// « Multi-clic » (D-18).
+    pub const MULTI_CLICK: MacroId = MacroId("multi-clic");
 }
 
 /// A mouse button that a macro can hold.
@@ -45,11 +47,84 @@ impl MouseButton {
     }
 }
 
+/// The speed of « Multi-clic » (D-22): a whole number of clicks per second, from [`ClickRate::MIN`]
+/// to [`ClickRate::MAX`]. A value outside cannot be made: [`ClickRate::new`] brings it back inside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ClickRate(u8);
+
+impl ClickRate {
+    /// 1 click per second.
+    pub const MIN: ClickRate = ClickRate(1);
+    /// 15 clicks per second: about the most a fast hand does.
+    pub const MAX: ClickRate = ClickRate(15);
+    /// 10 clicks per second.
+    pub const DEFAULT: ClickRate = ClickRate(10);
+
+    /// `clicks` per second, brought back between the bounds (for the HUD's speed control, P2.3).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn new(clicks: u32) -> ClickRate {
+        let clicks = clicks.clamp(u32::from(Self::MIN.0), u32::from(Self::MAX.0));
+        ClickRate(u8::try_from(clicks).unwrap_or(Self::MAX.0))
+    }
+
+    /// `clicks` per second if it lies between the bounds, else `None`.
+    pub fn exact(clicks: u64) -> Option<ClickRate> {
+        let clicks = u8::try_from(clicks).ok()?;
+        (Self::MIN.0..=Self::MAX.0).contains(&clicks).then_some(ClickRate(clicks))
+    }
+
+    /// Clicks per second.
+    pub fn per_second(self) -> u32 {
+        u32::from(self.0)
+    }
+
+    /// The speed as the HUD writes it: « 10 clics/s », « 1 clic/s ».
+    pub fn label(self) -> String {
+        match self.0 {
+            1 => "1 clic/s".to_string(),
+            n => format!("{n} clics/s"),
+        }
+    }
+
+    /// Time from one press to the next.
+    pub fn period(self) -> std::time::Duration {
+        std::time::Duration::from_secs(1) / self.per_second()
+    }
+}
+
 /// The options of a macro, by kind of macro.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacroOptions {
     /// « Maintenir le clic »: the held button.
     HoldClick { button: MouseButton },
+    /// « Multi-clic »: the clicked button and the speed. A new speed while the macro runs counts
+    /// from the next click; a new button while it runs stops it, as for « Maintenir le clic ».
+    MultiClick { button: MouseButton, rate: ClickRate },
+}
+
+impl MacroOptions {
+    /// The button the macro holds or clicks.
+    pub fn button(self) -> MouseButton {
+        match self {
+            MacroOptions::HoldClick { button } | MacroOptions::MultiClick { button, .. } => button,
+        }
+    }
+
+    /// The same options with another button.
+    pub fn with_button(self, button: MouseButton) -> Self {
+        match self {
+            MacroOptions::HoldClick { .. } => MacroOptions::HoldClick { button },
+            MacroOptions::MultiClick { rate, .. } => MacroOptions::MultiClick { button, rate },
+        }
+    }
+
+    /// The same options with another speed (« Multi-clic » only: other options stay as they are).
+    pub fn with_rate(self, rate: ClickRate) -> Self {
+        match self {
+            MacroOptions::MultiClick { button, .. } => MacroOptions::MultiClick { button, rate },
+            other => other,
+        }
+    }
 }
 
 /// What a macro is doing.
@@ -77,6 +152,9 @@ pub struct MacroView {
     pub options: MacroOptions,
     /// False for a macro « à venir »: shown greyed out, nothing can be asked of it.
     pub available: bool,
+    /// An active « Multi-clic » whose clicks wait because the mouse is on the HUD (D-22); they go on
+    /// once it leaves. Always false otherwise.
+    pub suspended: bool,
 }
 
 /// Level of a one-off message.
@@ -159,16 +237,18 @@ impl HudState {
 /// Everything the HUD may ask for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HudAction {
-    /// Start a macro. « Maintenir le clic » started from the HUD presses its button after a short
-    /// delay (the time to move the mouse away from the HUD), its hotkey presses it at once.
+    /// Start a macro, after stopping the one that runs, if any (one at a time, D-20). Started from
+    /// the HUD, a macro acts after a short delay (the time to move the mouse away from the HUD); its
+    /// hotkey starts it at once.
     Start(MacroId),
-    /// Stop a macro (releases what it holds).
+    /// Stop a macro (releases what it holds; « Multi-clic » sends no more clicks).
     Stop(MacroId),
     /// Wait for the next key or combination, which becomes the macro's hotkey.
     StartCapture(MacroId),
     /// Stop waiting (Échap does the same, from the keyboard).
     CancelCapture,
-    /// Change the options of a macro (the held button). Changing them while the macro runs stops it.
+    /// Change the options of a macro (the button; the speed of « Multi-clic »). A new button while
+    /// the macro runs stops it; a new speed while « Multi-clic » runs counts from the next click.
     SetOptions(MacroId, MacroOptions),
     /// Collapse (true) or expand (false) the HUD.
     SetCollapsed(bool),
@@ -190,6 +270,17 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
         hotkey: "F8".into(),
         options: MacroOptions::HoldClick { button: MouseButton::Left },
         available: true,
+        suspended: false,
+    };
+    let multi_click = MacroView {
+        id: MacroId::MULTI_CLICK,
+        name: "Multi-clic",
+        description: "Clique encore et encore, à la rapidité choisie ; le raccourci ou un vrai clic l'arrête.",
+        status: MacroStatus::Stopped,
+        hotkey: "F9".into(),
+        options: MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT },
+        available: true,
+        suspended: false,
     };
     let base = HudState {
         app_name: "MacroHUD",
@@ -290,8 +381,95 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
                     hotkey: "F9".into(),
                     options: MacroOptions::HoldClick { button: MouseButton::Left },
                     available: false,
+                    suspended: false,
                 })
             }),
         ),
+        ("deux macros", with(&|s| s.macros.push(multi_click.clone()))),
+        (
+            "multi-clic actif",
+            with(&|s| {
+                s.macros.push(multi_click.clone());
+                s.macros[1].status = MacroStatus::Active;
+            }),
+        ),
+        (
+            "multi-clic suspendu (souris sur le HUD)",
+            with(&|s| {
+                s.macros.push(multi_click.clone());
+                s.macros[1].status = MacroStatus::Active;
+                s.macros[1].suspended = true;
+            }),
+        ),
+        (
+            "multi-clic aux bornes de la rapidité, bouton droit",
+            with(&|s| {
+                s.macros.push(multi_click.clone());
+                s.macros[1].options = MacroOptions::MultiClick { button: MouseButton::Right, rate: ClickRate::MAX };
+            }),
+        ),
+        (
+            "multi-clic indisponible",
+            with(&|s| {
+                s.macros.push(multi_click.clone());
+                s.macros[0].hotkey = "F9".into();
+                s.macros[1].status = MacroStatus::Unavailable(
+                    "F9 est déjà le raccourci de « Maintenir le clic » : choisis-en un autre.".into(),
+                );
+            }),
+        ),
+        (
+            "replié, multi-clic actif",
+            with(&|s| {
+                s.collapsed = true;
+                s.macros.push(multi_click.clone());
+                s.macros[1].status = MacroStatus::Active;
+            }),
+        ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn click_rates_stay_between_their_bounds() {
+        assert_eq!(ClickRate::new(0), ClickRate::MIN);
+        assert_eq!(ClickRate::new(16), ClickRate::MAX);
+        assert_eq!(ClickRate::new(u32::MAX), ClickRate::MAX);
+        assert_eq!(ClickRate::new(7).per_second(), 7);
+        assert_eq!(ClickRate::exact(15), Some(ClickRate::MAX));
+        assert_eq!(ClickRate::exact(0), None);
+        assert_eq!(ClickRate::exact(16), None);
+        assert_eq!(ClickRate::exact(256 + 10), None);
+        assert_eq!(
+            (ClickRate::MIN.per_second(), ClickRate::DEFAULT.per_second(), ClickRate::MAX.per_second()),
+            (1, 10, 15)
+        );
+        assert_eq!(ClickRate::DEFAULT.period(), Duration::from_millis(100));
+        assert_eq!(
+            (ClickRate::MIN.label(), ClickRate::MAX.label()),
+            ("1 clic/s".to_string(), "15 clics/s".to_string())
+        );
+        assert_eq!(ClickRate::MIN.period(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn options_change_one_thing_at_a_time() {
+        let hold = MacroOptions::HoldClick { button: MouseButton::Left };
+        let multi = MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT };
+        assert_eq!(hold.with_button(MouseButton::Right), MacroOptions::HoldClick { button: MouseButton::Right });
+        assert_eq!(hold.with_rate(ClickRate::MAX), hold);
+        assert_eq!(
+            multi.with_button(MouseButton::Middle),
+            MacroOptions::MultiClick { button: MouseButton::Middle, rate: ClickRate::DEFAULT }
+        );
+        assert_eq!(
+            multi.with_rate(ClickRate::MIN),
+            MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::MIN }
+        );
+        assert_eq!(multi.button(), MouseButton::Left);
+    }
 }

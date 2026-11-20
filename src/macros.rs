@@ -1,6 +1,6 @@
 //! The macros MacroHUD knows, in display order (D-05: the HUD is designed for several).
 
-use crate::contract::{MacroId, MacroOptions, MouseButton};
+use crate::contract::{ClickRate, MacroId, MacroOptions, MouseButton};
 use crate::hotkey::Hotkey;
 
 /// What does not change about a macro.
@@ -28,8 +28,19 @@ pub const HOLD_CLICK: MacroDef = MacroDef {
     default_options: MacroOptions::HoldClick { button: MouseButton::Left },
 };
 
+/// « Multi-clic » (D-18): its hotkey clicks the chosen button again and again where the mouse is, at
+/// the chosen speed; the hotkey again, or a real click of that button, stops it.
+pub const MULTI_CLICK: MacroDef = MacroDef {
+    id: MacroId::MULTI_CLICK,
+    name: "Multi-clic",
+    description: "Clique encore et encore, à la rapidité choisie ; le raccourci ou un vrai clic l'arrête.",
+    available: true,
+    default_hotkey: Hotkey::F9,
+    default_options: MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT },
+};
+
 /// All macros, in display order.
-pub const CATALOG: &[MacroDef] = &[HOLD_CLICK];
+pub const CATALOG: &[MacroDef] = &[HOLD_CLICK, MULTI_CLICK];
 
 #[cfg(test)]
 mod tests {
@@ -42,6 +53,19 @@ mod tests {
         assert_eq!(first.default_hotkey, Hotkey::F8);
         assert_eq!(first.default_options, MacroOptions::HoldClick { button: MouseButton::Left });
         assert!(first.available);
+    }
+
+    #[test]
+    fn the_second_macro_clicks_the_left_button_ten_times_a_second_with_f9() {
+        let second = CATALOG[1];
+        assert_eq!(second.id, MacroId::MULTI_CLICK);
+        assert_eq!(second.name, "Multi-clic");
+        assert_eq!(second.default_hotkey, Hotkey::F9);
+        assert_eq!(
+            second.default_options,
+            MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::DEFAULT }
+        );
+        assert!(second.available);
     }
 
     #[test]

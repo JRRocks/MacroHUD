@@ -176,6 +176,8 @@ pub struct Hotkey {
 impl Hotkey {
     /// The default hotkey of the first macro (D-05).
     pub const F8: Hotkey = Hotkey { modifiers: Modifiers::NONE, key: vk::F8 };
+    /// The default hotkey of « Multi-clic » (D-22).
+    pub const F9: Hotkey = Hotkey { modifiers: Modifiers::NONE, key: vk::F9 };
 
     pub const fn new(modifiers: Modifiers, key: Vk) -> Self {
         Hotkey { modifiers, key }

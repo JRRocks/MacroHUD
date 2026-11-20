@@ -218,10 +218,9 @@ fn chip_width(main: Option<&MacroView>) -> f32 {
     (width + 24.0 + 4.0 + 1.0).ceil()
 }
 
-/// The held button in one word, the selector's: « gauche », « droit », « milieu ».
+/// The held (or clicked) button in one word, the selector's: « gauche », « droit », « milieu ».
 fn button_word(view: &MacroView) -> &'static str {
-    let MacroOptions::HoldClick { button } = view.options;
-    match button {
+    match view.options.button() {
         MouseButton::Left => "gauche",
         MouseButton::Right => "droit",
         MouseButton::Middle => "milieu",
@@ -231,7 +230,7 @@ fn button_word(view: &MacroView) -> &'static str {
 /// Drawing of a kind of macro, shown instead of the ▶ button while it is « à venir ».
 fn kind_icon(view: &MacroView) -> Icon {
     match view.options {
-        MacroOptions::HoldClick { .. } => Icon::Mouse,
+        MacroOptions::HoldClick { .. } | MacroOptions::MultiClick { .. } => Icon::Mouse,
     }
 }
 
@@ -243,6 +242,16 @@ fn state_line(view: &MacroView) -> (Option<Icon>, String, f32) {
         return (None, "À venir".to_owned(), s::REGULAR);
     }
     let button = button_word(view);
+    // « Multi-clic » (provisional words, until its HUD is designed: P2.2, P2.3).
+    if let MacroOptions::MultiClick { rate, .. } = view.options {
+        let rate = rate.label();
+        return match view.status {
+            MacroStatus::Unavailable(_) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
+            MacroStatus::Active if view.suspended => (Some(Icon::Dot), "En pause · sur le HUD".to_owned(), s::SEMIBOLD),
+            MacroStatus::Active => (Some(Icon::Dot), format!("Active · {rate}"), s::SEMIBOLD),
+            MacroStatus::Stopped => (Some(Icon::Stop), format!("Arrêtée · {rate}"), s::REGULAR),
+        };
+    }
     match view.status {
         MacroStatus::Unavailable(_) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
         MacroStatus::Active => (Some(Icon::Dot), format!("Active · {button} enfoncé"), s::SEMIBOLD),
@@ -493,12 +502,15 @@ fn paint_options(
     let left = block.left() + 12.0;
     let mut y = block.top() + 8.0;
 
-    let MacroOptions::HoldClick { button } = view.options;
-    text::draw(p, "Bouton maintenu", 12.0, s::SEMIBOLD, s::TEXT_2, left, y, s::LINE_12);
+    let title = match view.options {
+        MacroOptions::HoldClick { .. } => "Bouton maintenu",
+        MacroOptions::MultiClick { .. } => "Bouton cliqué",
+    };
+    text::draw(p, title, 12.0, s::SEMIBOLD, s::TEXT_2, left, y, s::LINE_12);
     y += s::LINE_12 + 4.0;
     let selector = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::SELECTOR_HEIGHT));
-    if let Some(choice) = parts::selector(ui, p, selector, id.with("bouton"), button) {
-        actions.push(HudAction::SetOptions(view.id, MacroOptions::HoldClick { button: choice }));
+    if let Some(choice) = parts::selector(ui, p, selector, id.with("bouton"), view.options.button()) {
+        actions.push(HudAction::SetOptions(view.id, view.options.with_button(choice)));
     }
     y += parts::SELECTOR_HEIGHT + 10.0;
 
