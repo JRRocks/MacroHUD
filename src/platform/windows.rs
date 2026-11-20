@@ -33,8 +33,12 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, GetLastError, HANDLE, HWND,
     INVALID_HANDLE_VALUE, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
+use windows_sys::Win32::Graphics::Dwm::{
+    DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
+    DwmSetWindowAttribute,
+};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+    ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
     MonitorFromRect, ScreenToClient,
 };
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
@@ -958,7 +962,26 @@ impl HudWindow {
             RawWindowHandle::Win32(window) => Some(window.hwnd.get()),
             _ => None,
         });
-        HudWindow { hwnd }
+        let window = HudWindow { hwnd };
+        window.remove_system_frame(cc);
+        window
+    }
+
+    /// The HUD draws its own outline and rounded corners: Windows must draw nothing around it.
+    /// egui asks winit, for every borderless window, for the system's drop shadow; Windows then
+    /// keeps a 1 px band on top of the window and, on Windows 11, draws its 1 px border and rounds
+    /// the corners itself, which darkens them (P1.9). All of it goes; the window stays transparent
+    /// (another setting). The HUD never sends `ViewportCommand::Decorations`, which would bring the
+    /// shadow back.
+    fn remove_system_frame(&self, cc: &eframe::CreationContext<'_>) {
+        use winit::platform::windows::WindowExtWindows as _;
+        let Some(hwnd) = self.hwnd else { return };
+        // The shadow is part of winit's own state (it shapes the client area): only winit can drop it.
+        // It does at once, the frame being recomputed before this returns.
+        let shadow_dropped = cc.winit_window().map(|window| window.set_undecorated_shadow(false)).is_some();
+        let border = dwm_set(hwnd, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE);
+        let corners = dwm_set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND as u32);
+        crate::log::write(frame_report(shadow_dropped, border, corners, client_covers_window(hwnd)));
     }
 
     /// Raw handle, for the engine (is the pointer over the HUD?).
@@ -1091,6 +1114,55 @@ unsafe extern "system" fn window_keyboard_procedure(code: i32, wparam: WPARAM, l
         }
     }
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
+}
+
+/// Sets a 32-bit attribute of the window's frame, drawn by the desktop window manager.
+fn dwm_set(hwnd: isize, attribute: DWMWINDOWATTRIBUTE, value: u32) -> i32 {
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd as HWND,
+            attribute as u32,
+            (&value as *const u32).cast(),
+            std::mem::size_of::<u32>() as u32,
+        )
+    }
+}
+
+/// Whether the window's client area (where the HUD draws) covers the whole window: no band left
+/// for Windows to draw in. `None` when it cannot be known.
+fn client_covers_window(hwnd: isize) -> Option<bool> {
+    let hwnd = hwnd as HWND;
+    let mut window = RECT::default();
+    let mut client = RECT::default();
+    let mut origin = POINT::default();
+    let known = unsafe {
+        GetWindowRect(hwnd, &mut window) != 0
+            && GetClientRect(hwnd, &mut client) != 0
+            && ClientToScreen(hwnd, &mut origin) != 0
+    };
+    known.then(|| {
+        (origin.x, origin.y) == (window.left, window.top)
+            && (client.right, client.bottom) == (window.right - window.left, window.bottom - window.top)
+    })
+}
+
+/// The run log's line about the frame Windows draws around the HUD: what was asked, what Windows
+/// answered (`border`, `corners`: HRESULT), and whether the HUD draws in the whole window.
+fn frame_report(shadow_dropped: bool, border: i32, corners: i32, covers: Option<bool>) -> String {
+    let answer = |result: i32, done: &str, refused: &str| {
+        if result == 0 { done.to_string() } else { format!("{refused} (Windows répond {:#010x})", result as u32) }
+    };
+    let shadow = if shadow_dropped { "retirée" } else { "laissée (fenêtre de winit introuvable)" };
+    let area = match covers {
+        Some(true) => "toute la fenêtre",
+        Some(false) => "pas toute la fenêtre (une bande reste à Windows)",
+        None => "inconnue",
+    };
+    format!(
+        "Fenêtre du HUD : ombre de Windows : {shadow} ; bordure de Windows 11 : {} ; coins arrondis par Windows : {} ; zone dessinée par le HUD : {area}.",
+        answer(border, "retirée", "non retirée"),
+        answer(corners, "non", "réglage refusé"),
+    )
 }
 
 fn move_window(hwnd: isize, x: i32, y: i32) {
@@ -1277,6 +1349,23 @@ mod tests {
         hooks.ask(|a| HookRequest::StartCapture(Modifiers::NONE, a)).expect("keyboard hook");
         hooks.tell(HookRequest::StopCapture);
         drop(hooks);
+    }
+
+    /// The run log says what Windows accepted about the HUD's frame (Windows 10 has no border nor
+    /// rounded corners to remove: it refuses those two).
+    #[test]
+    fn the_frame_report_says_what_windows_accepted() {
+        assert_eq!(
+            frame_report(true, 0, 0, Some(true)),
+            "Fenêtre du HUD : ombre de Windows : retirée ; bordure de Windows 11 : retirée ; coins arrondis \
+             par Windows : non ; zone dessinée par le HUD : toute la fenêtre."
+        );
+        let e_invalidarg = 0x8007_0057_u32 as i32;
+        let refused = frame_report(true, e_invalidarg, e_invalidarg, Some(false));
+        assert!(refused.contains("bordure de Windows 11 : non retirée (Windows répond 0x80070057)"), "{refused}");
+        assert!(refused.contains("coins arrondis par Windows : réglage refusé (Windows répond 0x80070057)"));
+        assert!(refused.contains("pas toute la fenêtre (une bande reste à Windows)"), "{refused}");
+        assert!(frame_report(false, 0, 0, None).contains("ombre de Windows : laissée (fenêtre de winit introuvable)"));
     }
 
     /// The HUD thread's keyboard hook installs and goes away (on the test's own thread).
