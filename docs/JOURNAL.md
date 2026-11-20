@@ -104,6 +104,9 @@ Gabarit :
   relâchement (code, boutons et touches encore enfoncés, point, point ramené dans la fenêtre) ;
   chaque message d'une macro la nomme, seuls les refus sont des « raccourci refusé » ; les textes
   courts des refus. Pour Windows seulement (CI) : codes des messages, description d'un relâchement.
+  - CI, exécution n° 13 (commit `5ffa661`, le code de ce correctif) : tout vert. Windows : clippy ;
+    110 tests ; compilation release ; `MacroHUD.0.1.13.exe --version` répond « MacroHUD 0.1.13 ».
+    Le commit vide qui suit refait tout et donne l'exécutable à essayer.
 - **Non vérifié sur le PC** : R24 (P1.8, avec la preuve dans `macrohud.log`), R25 (textes des refus).
 - **Problèmes et dette** : un programme qui lit la souris autrement que par les messages de sa
   fenêtre (bien des jeux) voit déjà le bouton relâché par `SendInput` ; le message envoyé en plus ne
