@@ -68,6 +68,10 @@ Gabarit :
 - **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
   Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 138 tests OK sous Linux, dont
   les nouveaux ci-dessus.
+  - CI, exécution n° 30 (commit `f98f5b4`, le code du correctif) : tout vert. Windows : clippy ; 146
+    tests, dont la minuterie de la capture du fil du HUD ; compilation release ; `MacroHUD.0.1.30.exe
+    --version` répond « MacroHUD 0.1.30 ». Le commit de fin qui suit refait tout et donne
+    l'exécutable à livrer.
 - **Non vérifié sur le PC** (D-29) : R24 et R25, corrigés et vérifiés par les tests de la CI
   seulement.
 - **Problèmes et dette** : la boîte de plantage dit « maintenu » aussi pour « Multi-clic » (remarque
