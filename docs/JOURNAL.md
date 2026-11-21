@@ -21,6 +21,29 @@ Gabarit :
 
 ---
 
+## 2026-11-21 · Livraison : MacroHUD 0.1.33, avec « Multi-clic »
+
+- **Session** : maître
+- **Branche et commit** : `main` avancé en avance rapide de `8baf82f` à `9f1ed03` (sommet de
+  `integration/passage-3`, qui contient le correctif 4 de la session « programmation ») ; CI n° 33
+  sur `main` → Release `v0.1.33`.
+- **Objectif** : corriger les deux défauts du passage 3 et livrer sans nouveau test sur le PC (D-29).
+- **Réalisé** :
+  - Correctif 4 (session « programmation ») : un seul relâchement par arrêt, même quand la fenêtre de
+    l'appui tient la capture hors du premier plan ; Alt+Tab refusé pendant une capture quand le HUD a
+    le clavier. Vérifié par les tests de la CI seulement.
+  - Release `v0.1.33` : `MacroHUD.0.1.33.exe` posé dans le dossier d'applications de l'utilisateur,
+    empreinte SHA-256 identique à celle de GitHub, `--version` répond « MacroHUD 0.1.33 » ; lancé :
+    F8 et F9 enregistrés, minuterie haute résolution, fenêtre sans ombre ni bordure ; réglages gardés.
+  - Contrôle « dépôt public » avant le push : rien à signaler.
+- **Décisions** : D-29.
+- **Vérifications** : CI n° 33 : tests Linux et Windows, exécutable, publication : vert.
+- **Non vérifié sur le PC** : R24 et R25 après le correctif 4 (D-29) ; R3 et R29 (vrai clic) ; R4 et
+  R34 (jeu) ; R20 (échelle d'affichage).
+- **Problèmes et dette** : la boîte de plantage dit « maintenu » aussi pour « Multi-clic » ; l'encadré
+  « Macro indisponible » de « Multi-clic » peut couper sa ligne après un « « » ouvrant.
+- **Prochaine étape** : retour de l'utilisateur sur la 0.1.33.
+
 ## 2026-11-21 · Correctif 4 : un seul relâchement par arrêt, Alt+Tab refusé quand le HUD a le clavier
 
 - **Session** : programmation
