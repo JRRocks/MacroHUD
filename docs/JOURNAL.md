@@ -21,6 +21,61 @@ Gabarit :
 
 ---
 
+## 2026-11-21 · Correctif 4 : un seul relâchement par arrêt, Alt+Tab refusé quand le HUD a le clavier
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, avancée rapide sur `integration/passage-3`
+  (`c211d23`), puis le correctif, puis le commit de fin `[ETAPE-FINIE programmation-correctif-4]`.
+  L'exécutable est l'artefact de la CI de ce dernier commit.
+- **Objectif** : les deux défauts du passage 3 (R24, R25). Pas de nouveau test sur le PC (D-29) :
+  les tests de la CI sont la seule vérification.
+- **Réalisé** :
+  1. **Défaut 1 (R24), la cause** : la règle du correctif 2 disait qu'une capture de la souris ne
+     suit le pointeur que si son programme est au premier plan. Le passage 3 la contredit : une
+     fenêtre qui tient la capture a reçu le relâchement de `SendInput` sans être au premier plan
+     (après un clic sur le HUD, `GetForegroundWindow` vaut souvent 0), et MacroHUD lui en envoyait un
+     second. **La correction** (D-30) : MacroHUD n'envoie le relâchement à la fenêtre de l'appui que
+     si elle ne tient pas la capture et n'est pas sous le pointeur ; le premier plan n'entre plus en
+     compte (`macrohud.log` l'écrit toujours). Vaut aussi pour chaque clic de « Multi-clic » (souris
+     qui entre sur le HUD pendant un appui).
+     **Ce qui le vérifie** : un test reprend chaque arrêt relevé sur le PC (fenêtre qui tient la
+     capture, pointeur sur le HUD, au premier plan ou non ; F8 le pointeur sur la fenêtre ; Paint et
+     la fenêtre du passage 2, sans capture) et exige exactement un relâchement pour la fenêtre de
+     l'appui : celui de Windows ou celui de MacroHUD, jamais les deux, jamais aucun. Il échoue si la
+     condition du premier plan revient.
+     **Cas jamais vu sur le PC** : d'après la documentation de Windows, une capture prise par une
+     fenêtre qui n'est pas au premier plan ne reçoit la souris que sous le pointeur. Si un programme
+     prenait la capture puis passait en arrière-plan avant l'arrêt (Alt+Tab pendant un maintien),
+     arrêté le pointeur ailleurs, sa fenêtre ne recevrait aucun relâchement.
+  2. **Défaut 2 (R25), la cause** : quand le HUD a le clavier, Windows garde la Tab d'Alt+Tab pour
+     lui (sa liste des fenêtres) ; le fil du HUD ne voit que l'Alt (les 3 événements du journal),
+     puis le clavier passe à une autre fenêtre. Le crochet global ne voit rien dans ce cas (déjà
+     constaté au correctif 1). **La correction** (D-31) : pendant une capture, le fil du HUD regarde
+     toutes les 50 ms (et à chaque image) si le clavier est passé à une fenêtre d'un autre programme ;
+     si c'est juste après un Alt (avec Maj au plus, sans autre touche), la capture répond Alt+Tab
+     (Alt+Maj+Tab avec Maj), que le moteur refuse : « Alt+Tab est déjà pris par Windows. F8 reste
+     actif. », l'ancien raccourci restant actif. Windows change quand même de fenêtre : le HUD ne
+     peut pas l'en empêcher. Une fenêtre au premier plan inconnue (0, comme après un clic sur le HUD)
+     ne déclenche rien. `macrohud.log` : « Capture : le clavier est passé à une autre fenêtre (…)
+     juste après Alt : Windows a pris la touche suivante, réponse … ».
+     **Ce qui le vérifie** : les suites que le fil du HUD peut voir (Alt tenu ; Alt, sa répétition
+     puis son relâchement ; un relâchement de Tab seul) donnent Alt+Tab ; avec Maj, Alt+Maj+Tab ;
+     rien tapé, Ctrl+Alt, Win+Alt, un Alt relâché suivi de Maj, une capture déjà finie ne donnent
+     rien. Le moteur refuse Alt+Tab venu du fil du HUD et F8 reste actif. Sous Windows (CI), la
+     minuterie de la capture est posée, ne répond rien sans Alt, puis est retirée avec elle.
+  - Aucun texte affiché ne change ; rien dans `src/hud/`.
+- **Décisions** : D-30, D-31 (développeur).
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` : 138 tests OK sous Linux, dont
+  les nouveaux ci-dessus.
+- **Non vérifié sur le PC** (D-29) : R24 et R25, corrigés et vérifiés par les tests de la CI
+  seulement.
+- **Problèmes et dette** : la boîte de plantage dit « maintenu » aussi pour « Multi-clic » (remarque
+  du passage 3) : c'est un texte affiché, laissé tel quel selon la consigne.
+- **Prochaine étape** : réunion sur `integration/passage-3`, puis livraison (D-29).
+
+---
+
 ## 2026-11-20 · Passage 3 sur le PC : « Multi-clic » juste, deux défauts anciens restants
 
 - **Session** : maître

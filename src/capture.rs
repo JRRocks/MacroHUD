@@ -1,5 +1,7 @@
 //! Capture of a new hotkey: the next key pressed, with the modifiers held at that moment.
-//! Échap cancels.
+//! Échap cancels. Alt+Tab, which Windows keeps for itself before the HUD's window sees the Tab,
+//! is recognised when that window loses the keyboard right after an Alt (see
+//! [`KeyCapture::keyboard_lost`]).
 //!
 //! It is fed with every keyboard event (from the low-level keyboard hook, on Windows) and decides
 //! which ones to swallow: the keys typed for the capture reach no application and trigger no other
@@ -56,11 +58,14 @@ pub struct KeyCapture {
     swallowed: Vec<Vk>,
     /// When the capture ended (a key, Échap, or [`KeyCapture::finish`]).
     finished_at: Option<Instant>,
+    /// The modifiers held at the last modifier press, if Alt was among them: Alt (and Shift)
+    /// waiting for their key. See [`KeyCapture::keyboard_lost`].
+    alt_waiting: Option<Modifiers>,
 }
 
 impl KeyCapture {
     pub fn new(held_at_start: Modifiers) -> Self {
-        KeyCapture { held_at_start, swallowed: Vec::new(), finished_at: None }
+        KeyCapture { held_at_start, swallowed: Vec::new(), finished_at: None, alt_waiting: None }
     }
 
     /// Whether the capture still waits for a key.
@@ -127,12 +132,27 @@ impl KeyCapture {
         }
         self.swallow_key(key);
         if modifier_of(key).is_some() {
+            let held = self.modifiers();
+            self.alt_waiting = held.alt.then_some(held);
             return Decision::SWALLOW;
         }
         self.finish();
         let outcome =
             if key == vk::ESCAPE { Outcome::Cancelled } else { Outcome::Chosen(Hotkey::new(self.modifiers(), key)) };
         Decision { swallow: true, outcome: Some(outcome) }
+    }
+
+    /// The window that listens (the HUD's) lost the keyboard to another window while the capture
+    /// waited. Right after an Alt (with Shift at most), and before any other key, that is Windows
+    /// switching windows: it takes Alt+Tab for itself, and the HUD's window never sees the Tab. The
+    /// capture answers Alt+Tab (Alt+Maj+Tab with Shift), refused as when another window has the
+    /// keyboard and the low-level hook sees the Tab. Otherwise nothing is known: the capture goes
+    /// on, and `None`.
+    pub fn keyboard_lost(&mut self) -> Option<Outcome> {
+        let waiting = self.alt_waiting.filter(|m| self.finished_at.is_none() && !m.ctrl && !m.win)?;
+        self.finish();
+        let modifiers = Modifiers { shift: waiting.shift, ..Modifiers::NONE.with(Modifier::Alt) };
+        Some(Outcome::Chosen(Hotkey::new(modifiers, vk::TAB)))
     }
 
     fn release_held_at_start(&mut self, modifier: Modifier) {
@@ -274,6 +294,54 @@ mod tests {
         let d = run(&mut c, &[(vk::KEY_M, false), (vk::MENU, false), (vk::CONTROL, false)]);
         assert!(d.iter().all(|d| d.swallow));
         assert!(!c.needs_events());
+    }
+
+    /// Passage 3 (R25): with the HUD in the foreground, Alt+Tab reaches its window as an Alt (the
+    /// Tab goes to Windows), then the HUD loses the keyboard: that is Alt+Tab, to be refused.
+    #[test]
+    fn the_keyboard_lost_right_after_an_alt_is_alt_tab() {
+        let alt_tab = Outcome::Chosen(Hotkey::new(Modifiers::NONE.with(Modifier::Alt), vk::TAB));
+        for events in [
+            // Alt still held when the keyboard goes (Windows shows its window list)...
+            vec![(vk::MENU, true)],
+            // ...or released already, with its repeat, a lone Tab release, in any order.
+            vec![(vk::MENU, true), (vk::MENU, true), (vk::MENU, false)],
+            vec![(vk::MENU, true), (vk::TAB, false), (vk::MENU, false)],
+            vec![(vk::LMENU, true), (vk::LMENU, false)],
+        ] {
+            let mut c = KeyCapture::new(Modifiers::NONE);
+            assert!(run(&mut c, &events).iter().all(|d| d.outcome.is_none()), "{events:?}");
+            assert!(c.is_capturing());
+            assert_eq!(c.keyboard_lost(), Some(alt_tab), "{events:?}");
+            assert!(!c.is_capturing());
+            assert_eq!(c.keyboard_lost(), None, "answered once");
+        }
+        // With Shift: Alt+Maj+Tab.
+        let mut c = KeyCapture::new(Modifiers::NONE);
+        run(&mut c, &[(vk::MENU, true), (vk::SHIFT, true)]);
+        let alt_shift_tab = Hotkey::new(Modifiers::NONE.with(Modifier::Alt).with(Modifier::Shift), vk::TAB);
+        assert_eq!(c.keyboard_lost(), Some(Outcome::Chosen(alt_shift_tab)));
+    }
+
+    #[test]
+    fn the_keyboard_lost_otherwise_tells_nothing() {
+        // Nothing typed (a click on another window), Ctrl+Alt, Alt released then Shift alone, Win:
+        // the capture goes on (the low-level hook takes over in the other window).
+        for events in [
+            vec![],
+            vec![(vk::CONTROL, true), (vk::MENU, true)],
+            vec![(vk::MENU, true), (vk::MENU, false), (vk::SHIFT, true)],
+            vec![(vk::LWIN, true), (vk::MENU, true)],
+        ] {
+            let mut c = KeyCapture::new(Modifiers::NONE);
+            run(&mut c, &events);
+            assert_eq!(c.keyboard_lost(), None, "{events:?}");
+            assert!(c.is_capturing(), "{events:?}");
+        }
+        // A capture already answered.
+        let mut c = KeyCapture::new(Modifiers::NONE);
+        run(&mut c, &[(vk::MENU, true), (vk::KEY_M, true)]);
+        assert_eq!(c.keyboard_lost(), None);
     }
 
     #[test]

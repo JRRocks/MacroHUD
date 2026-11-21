@@ -1540,6 +1540,27 @@ mod tests {
         }
     }
 
+    /// Passage 3 (R25): Alt+Tab with the HUD's window holding the keyboard is answered by the HUD's
+    /// thread (`KeySource::HudWindow`, see `KeyCapture::keyboard_lost`); it is refused as from any
+    /// other window, and F8 stays.
+    #[test]
+    fn alt_tab_from_the_huds_keyboard_is_refused_and_f8_stays() {
+        let mut e = engine();
+        let now = Instant::now();
+        e.command(Command::StartCapture(ID), now);
+        let alt_tab = Hotkey::new(Modifiers::NONE.with(Modifier::Alt), vk::TAB);
+        e.event(Event::Captured { outcome: Outcome::Chosen(alt_tab), source: KeySource::HudWindow }, now);
+        assert!(!calls(&mut e).iter().any(|c| matches!(c, Call::Register(_) | Call::Unregister(_))));
+        assert_eq!(
+            message(&e),
+            Message::hotkey_refused(ID, "Alt+Tab", "Alt+Tab est déjà pris par Windows. F8 reste actif.")
+        );
+        assert_eq!(e.snapshot().capturing, None);
+        assert_eq!(e.snapshot().macros[0].hotkey, Hotkey::F8);
+        press_hotkey(&mut e, now);
+        assert_eq!(status(&e), MacroStatus::Active, "F8 still works");
+    }
+
     #[test]
     fn altgr_characters_are_refused() {
         let euro = ctrl_alt(vk::KEY_E);

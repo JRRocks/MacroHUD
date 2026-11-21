@@ -292,11 +292,12 @@ impl Scene {
         let capture = if press_thread == 0 { 0 } else { capture_of(press_thread) };
         let foreground = unsafe { GetForegroundWindow() } as isize;
         let press_in_foreground = press_thread != 0 && thread_of(foreground) == press_thread;
+        // (The foreground is only written in the run log: it does not change where Windows sends the
+        // release, see `guard::release_reaches`.)
         let reaches = guard::release_reaches(&ReleaseScene {
             press_thread,
             pointer_thread: thread_of(pointer),
             press_thread_captures: capture != 0,
-            press_thread_foreground: press_in_foreground,
         });
         Scene { press, press_thread, pointer, capture, press_in_foreground, reaches }
     }
@@ -1127,12 +1128,14 @@ impl HudWindow {
             return;
         }
         WINDOW_KEYS_SEEN.store(0, Ordering::Relaxed);
-        let capture = WindowCapture { capture: KeyCapture::new(held_modifiers()), hook, report };
+        // Looks often whether the keyboard went to another window (Alt+Tab: see `keyboard_lost`).
+        let timer = unsafe { SetTimer(null_mut(), 0, KEYBOARD_CHECK_MS, Some(window_capture_timer)) };
+        let capture = WindowCapture { capture: KeyCapture::new(held_modifiers()), hook, timer, thread, report };
         WINDOW_CAPTURE.with(|cell| match cell.try_borrow_mut() {
             Ok(mut slot) => *slot = Some(capture),
             Err(_) => {
                 let mut capture = capture;
-                remove_hook(&mut capture.hook);
+                capture.close();
             }
         });
     }
@@ -1151,6 +1154,7 @@ impl HudWindow {
 
     /// Removes the HUD's keyboard hook once it has nothing left to do (called at every frame).
     pub fn key_capture_tick(&self) {
+        check_keyboard_lost();
         remove_window_capture(false);
     }
 
@@ -1174,11 +1178,29 @@ fn raise_window(hwnd: isize) {
     }
 }
 
+/// How often, during a capture on the HUD's thread, MacroHUD looks whether the keyboard went to
+/// another window.
+const KEYBOARD_CHECK_MS: u32 = 50;
+
 /// A capture listening to the keyboard messages of the HUD's own thread.
 struct WindowCapture {
     capture: KeyCapture,
     hook: HHOOK,
+    /// The thread timer of [`window_capture_timer`] (0: none).
+    timer: usize,
+    /// The HUD's thread, the one listening.
+    thread: u32,
     report: Box<dyn Fn(Outcome)>,
+}
+
+impl WindowCapture {
+    fn close(&mut self) {
+        remove_hook(&mut self.hook);
+        if self.timer != 0 {
+            unsafe { KillTimer(null_mut(), self.timer) };
+            self.timer = 0;
+        }
+    }
 }
 
 thread_local! {
@@ -1192,9 +1214,38 @@ fn remove_window_capture(force: bool) {
         let now = Instant::now();
         let done = slot.as_ref().is_some_and(|w| force || !w.capture.needs_events() || w.capture.expired(now));
         if done && let Some(mut window) = slot.take() {
-            remove_hook(&mut window.hook);
+            window.close();
         }
     });
+}
+
+/// During a capture on the HUD's thread: if the keyboard went to a window of another thread right
+/// after an Alt, Windows took Alt+Tab (its window list) before the HUD saw the Tab: the capture
+/// answers Alt+Tab, which the engine refuses (passage 3, R25). A foreground window unknown (0, as
+/// after a click on the HUD) tells nothing: the HUD may still have the keyboard.
+fn check_keyboard_lost() {
+    WINDOW_CAPTURE.with(|cell| {
+        let Ok(mut slot) = cell.try_borrow_mut() else { return };
+        let Some(window) = slot.as_mut() else { return };
+        let foreground = unsafe { GetForegroundWindow() } as isize;
+        if foreground == 0 || thread_of(foreground) == window.thread {
+            return;
+        }
+        if let Some(outcome) = window.capture.keyboard_lost() {
+            crate::log::write(format!(
+                "Capture : le clavier est passé à une autre fenêtre ({}) juste après Alt : Windows a pris la touche suivante, réponse {outcome:?}.",
+                describe(foreground)
+            ));
+            (window.report)(outcome);
+        }
+    });
+}
+
+unsafe extern "system" fn window_capture_timer(_hwnd: HWND, _message: u32, _id: usize, _time: u32) {
+    if !PANICKING.load(Ordering::Relaxed) {
+        check_keyboard_lost();
+        remove_window_capture(false);
+    }
 }
 
 unsafe extern "system" fn window_keyboard_procedure(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1480,8 +1531,13 @@ mod tests {
         let window = HudWindow::default();
         window.start_key_capture(Box::new(|_| {}));
         assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().is_some()), "hook installed");
+        let timer = WINDOW_CAPTURE.with(|cell| cell.borrow().as_ref().map_or(0, |w| w.timer));
+        assert_ne!(timer, 0, "keyboard check timer set");
+        // No Alt seen: whatever the foreground, the capture goes on.
+        window.key_capture_tick();
+        assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().as_ref().is_some_and(|w| w.capture.needs_events())));
         window.stop_key_capture();
-        assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().is_none()), "hook removed");
+        assert!(WINDOW_CAPTURE.with(|cell| cell.borrow().is_none()), "hook and timer removed");
     }
 
     #[test]

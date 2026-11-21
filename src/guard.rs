@@ -142,21 +142,19 @@ pub struct ReleaseScene {
     pub pointer_thread: u32,
     /// The press thread holds the mouse capture (`SetCapture`).
     pub press_thread_captures: bool,
-    /// The press thread owns the foreground window.
-    pub press_thread_foreground: bool,
 }
 
 /// Whether the release Windows delivers by itself reaches the application that received the press.
 ///
-/// Windows sends a button message to the window under the pointer, unless a window captured the
-/// mouse (`SetCapture`), and a capture only follows the pointer everywhere while its window is in
-/// the foreground. An application that did not capture the mouse (Paint does, many do not) thus
-/// never sees the release when the pointer is elsewhere at that moment, on the HUD for instance:
-/// the release must then be sent to it (P1.8).
+/// Windows sends a button message to the window that holds the mouse capture (`SetCapture`, what a
+/// window does to follow a drag), else to the window under the pointer. The PC tests showed both
+/// sides of it: a window without capture never sees the release when the pointer is elsewhere at
+/// that moment, on the HUD for instance (passage 2: the release must then be sent to it, P1.8); a
+/// window holding the capture gets it even when it is not in the foreground (passage 3: sending it
+/// another one made two). So the release is sent only to a window that neither holds the capture
+/// nor lies under the pointer: never two releases for one stop, never none.
 pub fn release_reaches(scene: &ReleaseScene) -> bool {
-    scene.press_thread == 0
-        || scene.pointer_thread == scene.press_thread
-        || (scene.press_thread_captures && scene.press_thread_foreground)
+    scene.press_thread == 0 || scene.pointer_thread == scene.press_thread || scene.press_thread_captures
 }
 
 /// The window message of a button's release.
@@ -491,26 +489,38 @@ mod tests {
         assert!(!is_injected(0));
     }
 
+    /// Every stop of the PC tests (R24, passages 2 and 3), and the release count it must give the
+    /// window of the press: the one Windows brings, plus the one MacroHUD sends when it does not.
     #[test]
-    fn a_release_reaches_the_press_window_only_under_the_pointer_or_by_capture() {
-        let app = 10;
-        let hud = 20;
-        let scene = |pointer_thread, captures, foreground| ReleaseScene {
+    fn a_stop_always_gives_exactly_one_release() {
+        let (app, hud) = (10, 20);
+        let scene = |pointer_thread, captures| ReleaseScene {
             press_thread: app,
             pointer_thread,
             press_thread_captures: captures,
-            press_thread_foreground: foreground,
         };
-        // F8 with the pointer still on the window that got the press.
-        assert!(release_reaches(&scene(app, false, false)));
-        // Pointer on the HUD: only a capture in the foreground brings the release (Paint)...
-        assert!(release_reaches(&scene(hud, true, true)));
-        // ...not a window without capture (the PC test's window), nor a capture in the background.
-        assert!(!release_reaches(&scene(hud, false, true)));
-        assert!(!release_reaches(&scene(hud, true, false)));
-        assert!(!release_reaches(&scene(hud, false, false)));
+        // What Windows does by itself, as seen on the PC: the release goes to the capture, else under
+        // the pointer; the foreground does not matter.
+        let windows_brings = |s: &ReleaseScene| s.press_thread_captures || s.pointer_thread == s.press_thread;
+        let releases = |s: &ReleaseScene| u32::from(windows_brings(s)) + u32::from(!release_reaches(s));
+        for (case, s) in [
+            // Passage 3, the defect: a window that keeps the mouse during a press (WinForms, a Win32
+            // drawing program), stopped with the pointer on the HUD (« Arrêter », F8, « Quitter »,
+            // Alt+F4), whether it is in the foreground or not (after a click on the HUD, often none is).
+            ("capture, pointeur sur le HUD", scene(hud, true)),
+            // F8 with the pointer on that window.
+            ("capture, pointeur sur la fenêtre", scene(app, true)),
+            // Paint, and the window of passage 2: no capture, pointer on the HUD: MacroHUD sends it.
+            ("sans capture, pointeur sur le HUD", scene(hud, false)),
+            // F8 with the pointer on a window without capture.
+            ("sans capture, pointeur sur la fenêtre", scene(app, false)),
+        ] {
+            assert_eq!(releases(&s), 1, "{case}");
+        }
+        assert!(release_reaches(&scene(hud, true)), "a capture brings the release: no second one");
+        assert!(!release_reaches(&scene(hud, false)), "without capture, elsewhere: sent");
         // Press window unknown: nothing to send.
-        assert!(release_reaches(&ReleaseScene { press_thread: 0, ..scene(hud, false, false) }));
+        assert!(release_reaches(&ReleaseScene { press_thread: 0, ..scene(hud, false) }));
     }
 
     #[test]
