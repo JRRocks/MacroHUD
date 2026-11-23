@@ -139,6 +139,8 @@ impl HudApp {
                 self.stop_window_capture();
             }
             HudAction::SetOptions(id, options) => self.engine.send(Command::SetOptions(id, options)),
+            // No external macro yet in this state (their engine comes next, P4.4).
+            HudAction::SetSetting(..) => {}
             HudAction::SetCollapsed(collapsed) => self.collapsed = collapsed,
             HudAction::StartDrag => ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag),
             HudAction::Quit => {
@@ -336,6 +338,7 @@ pub fn hud_state(snapshot: &Snapshot, catalog: &[MacroDef], collapsed: bool, mes
                 }
             })
             .collect(),
+        external_macros: Vec::new(),
         capturing: snapshot.capturing,
         message: message.cloned(),
         collapsed,
