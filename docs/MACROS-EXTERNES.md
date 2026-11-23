@@ -78,6 +78,10 @@ Toute autre ligne va dans `macrohud.log`. Une ligne trop longue est coupée à 2
   lequel des deux a eu lieu.
 - Script qui s'arrête seul sans `fin` (erreur, plantage) : boutons déclarés relâchés de même ; la
   ligne repasse à « arrêtée » avec l'encadré « « <nom> » s'est arrêtée seule » et le code de sortie.
+- Ajout du 2026-11-23 : un script qui a envoyé une `alerte` pendant ce lancement, puis s'arrête seul
+  sans `fin`, garde son encadré, seul, quel que soit son code de sortie (écrit dans `macrohud.log`) ;
+  pas d'encadré « s'est arrêtée seule » en plus (aperçu validé, vue 7). Celui-ci ne sert qu'à une
+  sortie sans `fin` ni `alerte`. Les boutons déclarés sont relâchés dans tous les cas.
 - Script introuvable ou qui ne démarre pas : la ligne reste « arrêtée » avec l'encadré « La macro ne
   peut pas démarrer » et la raison ; les autres macros marchent.
 - Un vrai clic de l'utilisateur n'arrête pas une macro externe et passe normalement (D-35).

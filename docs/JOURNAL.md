@@ -21,6 +21,33 @@ Gabarit :
 
 ---
 
+## 2026-11-23 · Macros externes : plan publié, construction lancée
+
+- **Session** : maître
+- **Branche et commit** : `main` : `c44969e` (cadrage P4.3, protocole, aperçu validé, logo), puis ce
+  commit de suivi `[skip ci]`.
+- **Objectif** : « Lance en publique car j'ai atteint ma limite de quota privée » : publier le
+  cadrage dans le dépôt public et lancer la construction.
+- **Réalisé** :
+  - `c44969e` poussé sur `main` après le contrôle « rien de privé ».
+  - Tâches envoyées aux sessions cloud existantes : « programmation », P4.4 sur
+    `claude/gifted-hypatia-g84kg1` (types du contrat d'abord, dans un commit « P4.4 contrat », puis
+    le moteur et le script d'exemple ; décisions D-40 à D-49) ; « visuel », P4.2 puis P4.5 sur
+    `claude/gifted-turing-0izrcw` (P4.5 sur le commit « P4.4 contrat » fusionné ; décisions D-50
+    à D-59). Marqueurs de fin attendus : `[ETAPE-FINIE visuel-icone]`,
+    `[ETAPE-FINIE programmation-macros-externes]`, `[ETAPE-FINIE visuel-macros-externes]`.
+  - `docs/MACROS-EXTERNES.md` : ajout daté sur « alerte puis sortie » (l'encadré du script reste
+    seul, comme la vue 7 de l'aperçu), aussi envoyé à la session « programmation ».
+- **Décisions** : aucune nouvelle ; choix du développeur : le contrat avant le moteur, pour que le
+  HUD avance en même temps ; une plage de numéros de décision par session.
+- **Vérifications** : contrôle « rien de privé » avant `c44969e` et avant ce commit : « Rien à
+  signaler ».
+- **Non vérifié sur le PC** : rien de nouveau.
+- **Problèmes et dette** : les sessions cloud ne disent rien quand elles finissent : leurs branches
+  se relisent à leurs marqueurs de fin.
+- **Prochaine étape** : relire les branches à leurs marqueurs de fin, puis P4.6 (test sur le PC avec
+  la halte des autres sessions, D-14) et la livraison.
+
 ## 2026-11-23 · Aperçu de la ligne d'une macro externe validé
 
 - **Session** : maître (PC)
