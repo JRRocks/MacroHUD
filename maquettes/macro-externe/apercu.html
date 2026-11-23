@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Macro externe dans le HUD</title>
+<style>
+*{box-sizing:border-box}
+html{background:#e9ecf0}
+body{margin:0;color:#1c1d20;font:16px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:28px;line-height:1.2;margin:0 0 10px;letter-spacing:-.01em}
+h2{font-size:22px;line-height:1.25;margin:0 0 8px}
+p{margin:0 0 10px}
+.intro{max-width:780px;color:#3f4147}
+section{background:#f8f9fb;border:1px solid #d5dae1;border-radius:14px;padding:18px 16px 20px;margin-top:22px}
+.vues{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px;margin-top:10px}
+figure{margin:0}
+.tuile{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:8px;padding:14px 8px;border-radius:10px;background:linear-gradient(#5d8fb8,#2f6f9c 55%,#245a80)}
+.tuile img{display:block;max-width:100%;height:auto}
+figcaption{margin-top:6px;font-size:15px;line-height:1.4;color:#2b2d32}
+figcaption b{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 4px;margin-right:6px;border-radius:6px;background:#1c1d20;color:#fff;font-size:13px}
+.liste{margin:6px 0 0;padding-left:20px;max-width:900px}
+.liste li{margin-top:4px}
+@media (max-width:420px){main{padding:20px 8px 40px}section{padding:14px 8px 16px}.tuile{padding:10px 2px}}
+
+/* ---------- HUD, redrawn after the real egui renders ---------- */
+.hud{width:316px;max-width:100%;background:#16181d;border:1.5px solid #3b3e46;border-radius:12px;color:#eceef2;
+  font:13px/1.3 Inter,"Segoe UI",system-ui,sans-serif;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+.hud .titre{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#0f1115;font-weight:700}
+.hud .titre .v{color:#9a9ea8;font-weight:500}
+.hud .titre .sp{flex:1}
+.hud .titre .act{font-weight:600;margin-left:10px}
+.hud .grip{color:#6c707a;letter-spacing:-2px;margin-right:2px}
+.ligne{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 9px;border-top:1px solid #2a2d34;border-left:4px solid #4a4f59}
+.ligne .btn{flex:none;width:30px;height:30px;border-radius:8px;border:1px solid #4a4f59;background:#22252c;display:grid;place-items:center;font-size:12px}
+.ligne .txt{flex:1;min-width:0}
+.ligne .nom{font-weight:700;font-size:14px}
+.ligne .etat{font-size:12px;color:#b9bcc4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.touche{flex:none;background:#eceef2;color:#111;font-weight:800;font-size:12px;border-radius:6px;padding:2px 8px;box-shadow:0 2px 0 #9ea3ad}
+.chev{flex:none;color:#cfd2d8;font-size:12px;width:12px;text-align:center}
+.ligne.on{background:#3ad07f;color:#0b1a12;border-left-color:#3ad07f}
+.ligne.on .etat{color:#0b1a12;font-weight:600}
+.ligne.on .btn{background:#0d1712;border-color:#0d1712;color:#3ad07f}
+.ligne.on .chev{color:#0b1a12}
+.ligne.fin{border-left-color:#5aa9e6}
+.reglages{padding:8px 12px 12px;border-top:1px solid #2a2d34;background:#16181d}
+.reglages .lab{display:flex;justify-content:space-between;color:#9a9ea8;font-weight:600;margin-top:8px}
+.reglages .lab b{color:#eceef2}
+.curseur{position:relative;height:22px;margin:2px 22px 0 14px}
+.curseur::before{content:"";position:absolute;left:0;right:0;top:9px;height:4px;border-radius:2px;background:#3b3e46}
+.curseur .plein{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:#eceef2}
+.curseur .bout{position:absolute;top:2px;width:18px;height:18px;margin-left:-9px;border-radius:50%;background:#eceef2;border:2px solid #9ea3ad}
+.curseur .min,.curseur .max{position:absolute;top:2px;font-size:12px;color:#b9bcc4}
+.curseur .min{left:-14px}.curseur .max{right:-24px}
+.rang{display:flex;align-items:center;justify-content:space-between;margin-top:10px;color:#9a9ea8;font-weight:600}
+.rang .droite{display:flex;gap:6px;align-items:center}
+.bouton{border:1px solid #4a4f59;border-radius:7px;padding:3px 10px;color:#eceef2;font-weight:700;background:#22252c}
+.info{margin-top:10px;font-size:12px;color:#b9bcc4;line-height:1.35}
+.pilule{flex:none;font-size:12px;font-weight:800;border-radius:999px;padding:2px 8px;color:#0b1a12;background:#e8b43c}
+.pilule.v{background:#0d1712;color:#3ad07f}
+.pilule.b{background:#5a96e6;color:#08111d}
+.pilule.g{background:#0d1712;color:#cfd2d8}
+.alerte{margin:8px 10px 10px;padding:8px 10px;border-radius:8px;background:#3a2c0d;border:1px solid #e8b43c;color:#f6dfa4;font-size:12px;line-height:1.35}
+.alerte b{color:#ffd36b}
+.replie{display:inline-flex;align-items:center;gap:9px;padding:7px 12px 7px 10px;border-radius:999px;background:#3ad07f;color:#0b1a12;
+  border:1.5px solid #0f1115;font:800 14px/1 Inter,"Segoe UI",system-ui,sans-serif;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+.replie .grip{color:#0b1a12;letter-spacing:-2px}
+.replie .touche{font-size:13px}
+.replie .chev{color:#0b1a12}
+</style>
+</head>
+<body>
+<main>
+<h1>Ligne d'une macro externe dans le HUD</h1>
+<p class="intro">Aperçu validé par l'utilisateur le 2026-11-23 (P4.3, D-37), recopié ici avec des textes d'exemple : la macro « Exemple » et tout ce qu'elle affiche viennent de sa déclaration et de son script (<code>docs/MACROS-EXTERNES.md</code>). Les dispositions, tailles et formes font foi ; les couleurs sont celles du HUD (<code>src/hud/style.rs</code>). HUD redessiné d'après les vrais rendus de <code>maquettes/rendu-egui/</code>.</p>
+
+<section>
+<h2>Aujourd'hui</h2>
+<div class="vues">
+<figure><div class="tuile" style="background:#6e7782"><img src="../rendu-egui/multi-1-reglages.png" alt="HUD actuel, réglages de Multi-clic ouverts" width="322"></div>
+<figcaption><b>A1</b>Le HUD : deux macros, Maintien et Multi-clic (vrai rendu).</figcaption></figure>
+<figure><div class="tuile" style="background:#6e7782"><img src="../rendu-egui/multi-4-replie-en-pause@2x.png" alt="HUD actuel replié, Multi-clic en pause" width="185"></div>
+<figcaption><b>A2</b>Le HUD replié pendant une macro (vrai rendu).</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>Avec une macro externe</h2>
+<div class="vues">
+
+<figure><div class="tuile"><div class="hud">
+ <div class="titre"><span class="grip">⠿</span>MacroHUD <span class="v">0.1.N</span><span class="sp"></span><span class="act">⌃ Replier</span><span class="act">✕ Quitter</span></div>
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Maintenir le clic</div><div class="etat">■ Arrêtée · bouton gauche</div></span><span class="touche">F8</span><span class="chev">⌄</span></div>
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Multi-clic</div><div class="etat">■ Arrêtée · gauche, 10/s</div></span><span class="touche">F9</span><span class="chev">⌄</span></div>
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Exemple</div><div class="etat">■ Arrêtée · limite 100 clics</div></span><span class="touche">F10</span><span class="chev">⌃</span></div>
+ <div class="reglages">
+  <div class="lab">Limite de clics <b>100 clics</b></div>
+  <div class="curseur"><span class="min">10</span><span class="plein" style="width:18%"></span><span class="bout" style="left:18%"></span><span class="max">500</span></div>
+  <div class="rang">Raccourci <span class="droite"><span class="touche">F10</span><span class="bouton">Changer</span></span></div>
+  <div class="info">Garde la fenêtre visée au premier plan. Un vrai clic n'arrête pas cette macro : F10 ou ▶ l'arrêtent.</div>
+ </div>
+</div></div>
+<figcaption><b>1</b>Trois macros, réglages de la macro externe ouverts : ses curseurs (<code>reglages</code>), le raccourci, sa ligne d'aide (<code>info</code>). Arrêtée : « ■ Arrêtée · » suivi de <code>etat_arretee</code>.</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="titre"><span class="grip">⠿</span>MacroHUD <span class="v">0.1.N</span><span class="sp"></span><span class="act">⌃ Replier</span><span class="act">✕ Quitter</span></div>
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Maintenir le clic</div><div class="etat">■ Arrêtée · bouton gauche</div></span><span class="touche">F8</span><span class="chev">⌄</span></div>
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Multi-clic</div><div class="etat">■ Arrêtée · gauche, 10/s</div></span><span class="touche">F9</span><span class="chev">⌄</span></div>
+ <div class="ligne on"><span class="btn">■</span><span class="txt"><div class="nom">Exemple</div><div class="etat">● Active · 12/100</div></span><span class="pilule">Attente</span><span class="touche">F10</span><span class="chev">⌄</span></div>
+</div></div>
+<figcaption><b>2</b>Active : « ● Active · » suivi du texte d'<code>etat</code>, et la pastille d'étape (ici ambre) entre l'état et la touche.</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="ligne on"><span class="btn">■</span><span class="txt"><div class="nom">Exemple</div><div class="etat">● Active · 12/100</div></span><span class="pilule v">Clic !</span><span class="touche">F10</span><span class="chev">⌄</span></div>
+ <div class="ligne on"><span class="btn">■</span><span class="txt"><div class="nom">Exemple</div><div class="etat">● Active · 13/100</div></span><span class="pilule g">Pause 8 s</span><span class="touche">F10</span><span class="chev">⌄</span></div>
+ <div class="ligne on"><span class="btn">■</span><span class="txt"><div class="nom">Exemple</div><div class="etat">● Active · 13/100</div></span><span class="pilule b">Relance</span><span class="touche">F10</span><span class="chev">⌄</span></div>
+</div></div>
+<figcaption><b>3</b>Les quatre couleurs de pastille : <code>verte</code>, <code>grise</code>, <code>bleue</code> (et <code>ambre</code> en 2).</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="ligne on"><span class="btn">■</span><span class="txt"><div class="nom">Exemple</div><div class="etat">❚❚ En pause · attend sa fenêtre</div></span><span class="touche">F10</span><span class="chev">⌄</span></div>
+</div></div>
+<figcaption><b>4</b><code>attente &lt;texte&gt;</code> : « ❚❚ En pause · texte », sans pastille ; <code>reprise</code> revient à 2.</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="ligne fin"><span class="btn">▶</span><span class="txt"><div class="nom">Exemple</div><div class="etat">✓ Terminée · 100/100 clics</div></span><span class="touche">F10</span><span class="chev">⌄</span></div>
+</div></div>
+<figcaption><b>5</b><code>fin &lt;texte&gt;</code> : la macro s'est arrêtée seule ; liseré bleu, jusqu'au lancement suivant.</figcaption></figure>
+
+<figure><div class="tuile"><div class="replie"><span class="grip">⠿</span>■ Active 12/100<span class="pilule">Attente</span><span class="touche">F10</span><span class="chev">⌄</span></div></div>
+<figcaption><b>6</b>Replié pendant la macro : la capsule d'aujourd'hui, avec le texte d'<code>etat</code> et la pastille.</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Exemple</div><div class="etat">■ Arrêtée · limite 100 clics</div></span><span class="touche">F10</span><span class="chev">⌄</span></div>
+ <div class="alerte"><b>▲ La fenêtre visée est en plein écran.</b> Passe-la en fenêtre : en plein écran, la macro ne voit pas l'écran.</div>
+</div></div>
+<figcaption><b>7</b><code>alerte &lt;titre&gt; | &lt;texte&gt;</code> : encadré ambre sous la ligne, comme « Raccourci refusé ».</figcaption></figure>
+
+<figure><div class="tuile"><div class="hud">
+ <div class="ligne"><span class="btn">▶</span><span class="txt"><div class="nom">Exemple</div><div class="etat">■ Arrêtée</div></span><span class="touche">F10</span><span class="chev">⌄</span></div>
+ <div class="alerte"><b>▲ « Exemple » ne peut pas démarrer.</b> Son script est introuvable sur ce PC. Les autres macros marchent.</div>
+</div></div>
+<figcaption><b>8</b>Message de MacroHUD quand le script manque ou ne démarre pas : « ■ Arrêtée » seul, et l'encadré.</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>Ce qui fait foi</h2>
+<ul class="liste">
+<li>La ligne d'une macro externe a la même forme que celle des macros internes ; rien ne la distingue.</li>
+<li>La pastille se place entre le texte d'état et la touche ; le texte d'état se coupe (…) avant elle si la place manque.</li>
+<li>Couleurs du HUD : <code>ambre</code> = WARN, <code>verte</code> = vert actif sur fond sombre (comme le bouton ■), <code>bleue</code> = INFO, <code>grise</code> = texte secondaire sur fond sombre.</li>
+<li>Le HUD garde sa largeur ; il grandit d'une ligne par macro externe.</li>
+</ul>
+</section>
+</main>
+</body>
+</html>

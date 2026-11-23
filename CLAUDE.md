@@ -14,6 +14,7 @@ Ce fichier ne contient que ce qui est propre à ce projet. Il reste court : le d
 | `docs/JOURNAL.md` | Une entrée par session, la plus récente en haut |
 | `docs/DECISIONS.md` | Décisions numérotées et datées |
 | `docs/CONTRAT-HUD.md` | Ce que le HUD montre et ce qu'il peut demander : la frontière entre code et visuel |
+| `docs/MACROS-EXTERNES.md` | Macros externes : scripts du PC, hors du dépôt, pilotés par le HUD (déclaration, échanges, arrêt) |
 | `docs/idees-futur.md` | Idées pour plus tard : à ne lire que sur ma demande |
 
 ## Qui fait quoi (D-07)

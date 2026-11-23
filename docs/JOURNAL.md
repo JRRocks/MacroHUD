@@ -21,6 +21,35 @@ Gabarit :
 
 ---
 
+## 2026-11-23 · Aperçu de la ligne d'une macro externe validé
+
+- **Session** : maître (PC)
+- **Branche et commit** : rien de commité
+- **Réalisé** : « Oui, c'est bon » (D-37) ; copie aux textes d'exemple `maquettes/macro-externe/apercu.html`, qui lie les vrais rendus de `maquettes/rendu-egui/` ; `docs/MACROS-EXTERNES.md` complété (`etat_arretee`, renvoi à l'aperçu) ; P4.3 terminé.
+- **Vérifications** : copie affichée dans Chrome, images chargées ; fichiers publiables relus : aucun mot privé.
+- **Prochaine étape** : accord de l'utilisateur pour publier `CLAUDE.md`, `docs/` et la copie d'aperçu sur `main`, puis sessions « programmation » (P4.4) et « visuel » (P4.5 et P4.2).
+
+## 2026-11-23 · Macros externes : cadrage écrit, aperçu de la ligne du HUD montré
+
+- **Session** : maître (PC)
+- **Branche et commit** : rien de commité (`CLAUDE.md` et `docs/` seulement)
+- **Objectif** : préparer la place d'une macro externe dans le HUD (P4.3).
+- **Réalisé** : réponses de l'utilisateur notées (D-34 : déclaration posée sur le PC, pas de bouton « Ajouter » ; D-35 : un vrai clic n'arrête pas une macro externe) ; protocole écrit (`docs/MACROS-EXTERNES.md`, D-36) ; contrat du HUD complété ; tâches P4.4 à P4.6. Aperçu de la ligne du HUD montré à l'utilisateur : privé, parce qu'il montre sa vraie macro.
+- **Vérifications** : aperçu lu à 1120 et à 375 px de large : aucun défilement horizontal, aucun texte de ligne coupé ; recherche des mots privés dans le dépôt : aucun.
+- **Non vérifié sur le PC** : tout le mécanisme (rien n'est codé).
+- **Prochaine étape** : « oui » de l'utilisateur sur l'aperçu, copie aux textes d'exemple dans `maquettes/macro-externe/`, puis commit des docs et lancement des sessions « programmation » (P4.4) et « visuel » (P4.5).
+
+## 2026-11-22 · Un seul HUD pour toutes les macros, et un logo
+
+- **Session** : maître (PC)
+- **Branche et commit** : rien de commité (`docs/` seulement)
+- **Objectif** : « Crée-moi un logo pour mon app unifiée » ; « je veux 1 seul HUD pour tous ».
+- **Réalisé** : logo choisi sur un aperçu privé à cinq variantes (D-33) ; `MacroHUD.ico` (10 tailles, de 16 à 256 px) et raccourci « MacroHUD » vers `MacroHUD.0.1.33.exe` posés dans le dossier d'applications de l'utilisateur (P4.1). Plan des macros externes (P4.2 à P4.5).
+- **Décisions** : D-32 (un seul HUD ; dépôt public ; macros externes), D-33 (logo).
+- **Vérifications** : icône relue aux tailles 16, 24, 32 et 48 px sur fond sombre et clair ; icône du raccourci lue par Windows : le logo, avec la flèche des raccourcis.
+- **Non vérifié sur le PC** : l'icône dans l'Explorateur ouvert à l'écran (lue par programme seulement).
+- **Prochaine étape** : cadrage des macros externes et aperçu de leur ligne dans le HUD (P4.3).
+
 ## 2026-11-21 · Livraison : MacroHUD 0.1.33, avec « Multi-clic »
 
 - **Session** : maître

@@ -16,6 +16,11 @@ session maître tranche et complète ce fichier, personne d'autre.
       Milieu, et la rapidité, un nombre entier de clics par seconde, avec ses bornes (1 et 15) ;
       quand elle est active, si ses clics sont suspendus parce que la souris est sur le HUD ;
   - si elle est disponible (une macro « à venir » se montre grisée).
+  - Ajout du 2026-11-23 (D-32, D-34) : les macros externes suivent, après les macros internes, avec
+    leurs réglages entiers (nom, unité, bornes, pas, valeur) et leur ligne d'aide ; quand elles sont
+    actives, ce que dit le script (`docs/MACROS-EXTERNES.md`) : texte d'état, pastille d'étape
+    (couleur et texte), « En pause » avec sa raison ; et, arrêtées, « Terminée » avec son texte ou
+    un encadré ambre (titre et texte).
 - La capture de raccourci en cours : quelle macro attend une touche, ou aucune.
 - Un message ponctuel (raccourci enregistré, raccourci refusé, erreur), avec son niveau : info,
   avertissement ou erreur.
@@ -35,6 +40,8 @@ session maître tranche et complète ce fichier, personne d'autre.
 - Changer une option d'une macro (le bouton maintenu). Ajout du 2026-11-20 (D-22) : pour
   « Multi-clic », le bouton cliqué et la rapidité (entier de 1 à 15) ; une rapidité changée pendant
   que la macro tourne compte dès le clic suivant.
+- Ajout du 2026-11-23 (D-34) : changer un réglage entier d'une macro externe, dans ses bornes et
+  par son pas ; la valeur part au script tout de suite s'il tourne.
 - Replier ou déplier le HUD ; le déplacer en le glissant (position retenue).
 - Quitter MacroHUD (relâche d'abord tout ce qui est enfoncé).
 
@@ -52,6 +59,9 @@ session maître tranche et complète ce fichier, personne d'autre.
   français ; l'ancien raccourci reste actif.
 - Ajout du 2026-11-20 (D-20) : une macro à la fois ; en activer une arrête d'abord l'autre, bouton
   relâché.
+- Ajout du 2026-11-23 (D-35, D-36) : une macro externe se bascule par son raccourci comme les autres
+  et compte dans « une macro à la fois » ; un vrai clic ne l'arrête pas ; son arrêt suit
+  `docs/MACROS-EXTERNES.md` (arrêt demandé, puis forcé après 2 s, boutons déclarés relâchés).
 - Ajout du 2026-11-20 (D-22) : aucun clic automatique n'atteint le HUD ; tant que la souris est sur
   le HUD, « Multi-clic » suspend ses clics, et les reprend quand elle en sort.
 - Les réglages (raccourcis, options, position, replié ou déplié) sont gardés dans
