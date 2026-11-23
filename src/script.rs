@@ -167,6 +167,14 @@ impl Scripts {
         input.send(line.to_string()).map_err(|_| "son entrée est fermée".to_string())
     }
 
+    /// Closes the input of the script of `run`, as when MacroHUD ends without a word.
+    #[cfg(test)]
+    pub fn close_input(&mut self, run: u64) {
+        if let Some(running) = self.running(run) {
+            running.input = None;
+        }
+    }
+
     /// Whether the script of `run` has ended, with its exit code.
     pub fn ended(&mut self, run: u64) -> Option<Option<i32>> {
         let running = self.running(run)?;
@@ -243,7 +251,7 @@ mod tests {
     }
 
     /// The pipes, the threads and the end, with a shell script (the example script itself, in
-    /// PowerShell, is tested in `engine::scripts::example`).
+    /// PowerShell, is run by `tests/macro-exemple/essais.rs`).
     #[cfg(unix)]
     #[test]
     fn a_script_talks_through_its_pipes_and_ends() {

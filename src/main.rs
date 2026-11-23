@@ -38,6 +38,12 @@ mod script;
 mod session;
 mod settings;
 
+// The example external macro, run for real by the engine (its script and these tests live in
+// tests/macro-exemple/).
+#[cfg(test)]
+#[path = "../tests/macro-exemple/essais.rs"]
+mod macro_exemple;
+
 use std::process::ExitCode;
 
 use contract::{Message, MessageLevel};
