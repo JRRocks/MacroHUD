@@ -11,8 +11,8 @@
 //! - [`window_size`]: the window's inner size, in points, for a given state (the window follows it);
 //! - [`TRANSPARENT`]: whether the window is transparent (rounded corners, folded pill);
 //! - [`MESSAGE_DURATION`]: how long a message stays shown;
-//! - [`window_icon`]: the window's icon (taskbar). If `src/hud/icone.ico` exists, it also becomes
-//!   the icon of `macrohud.exe` (see `build.rs`).
+//! - [`window_icon`]: the window's icon (taskbar, Alt+Tab): the logo (D-33), from `icone.ico`,
+//!   which `build.rs` also makes the icon of `macrohud.exe`.
 //!
 //! Everything the HUD shows comes from `crate::contract` (docs/CONTRAT-HUD.md); everything it asks
 //! goes through [`HudAction`]. Between frames it only remembers which macro has its settings
@@ -20,6 +20,7 @@
 //! same layout. `cargo test` renders every situation to PNG, without a screen (`render.rs`).
 
 mod icons;
+mod logo;
 mod parts;
 mod style;
 mod text;
@@ -51,9 +52,9 @@ pub fn setup(ctx: &egui::Context) {
     text::install(ctx);
 }
 
-/// The window's icon: no icon of its own yet (it would need its own mock-ups), so the default one.
+/// The window's icon (taskbar, Alt+Tab): the logo of MacroHUD (D-33).
 pub fn window_icon() -> egui::IconData {
-    egui::IconData::default()
+    logo::window_icon()
 }
 
 /// The window's inner size, in points: the HUD, its 1 px black ring included.
