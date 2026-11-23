@@ -6,11 +6,14 @@
 //!   buttons with `SendInput`;
 //! - the hook thread (« macrohud-crochets ») only runs the low-level mouse and keyboard hooks, which
 //!   must answer within a few milliseconds or Windows silently removes them. It installs them only
-//!   while needed (a button is held, a hotkey is being captured), so the mouse of a game is not slowed
-//!   down the rest of the time, and re-installs the mouse hook every few seconds while it is needed.
+//!   while needed (a button is held or clicked, the script of an external macro runs, a hotkey is
+//!   being captured), so the mouse of a game is not slowed down the rest of the time, and re-installs
+//!   the mouse hook every few seconds while it is needed.
 //!
 //! Every button MacroHUD presses is recorded in [`HELD`] before it is pressed, so that
-//! [`emergency_release`] (panic hook, crash filter, exit) can release it from any thread.
+//! [`emergency_release`] (panic hook, crash filter, exit) can release it from any thread. The script
+//! of an external macro runs in a Job Object ([`Job`]): it ends with MacroHUD however MacroHUD ends,
+//! and [`emergency_release`] ends it first, then releases its declared buttons.
 //!
 //! The capture of a new hotkey listens in two ways: the low-level keyboard hook (keys typed in any
 //! window), and a keyboard hook on the HUD's own thread (keys typed while the HUD has the focus: the
@@ -30,8 +33,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, GetLastError, HANDLE, HWND,
-    INVALID_HANDLE_VALUE, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED,
+    GetLastError, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
@@ -43,12 +46,17 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 use windows_sys::Win32::System::Diagnostics::Debug::{EXCEPTION_POINTERS, SetUnhandledExceptionFilter};
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+    TerminateJobObject,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::System::Threading::{
-    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateMutexW, CreateWaitableTimerExW, GetCurrentThread, GetCurrentThreadId,
-    INFINITE, SetThreadPriority, SetWaitableTimer, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_TIME_CRITICAL,
-    TIMER_ALL_ACCESS,
+    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateMutexW, CreateWaitableTimerExW, GetCurrentProcess, GetCurrentThread,
+    GetCurrentThreadId, INFINITE, SetThreadPriority, SetWaitableTimer, THREAD_PRIORITY_ABOVE_NORMAL,
+    THREAD_PRIORITY_TIME_CRITICAL, TIMER_ALL_ACCESS,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, HKL, INPUT, INPUT_0, INPUT_MOUSE, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, MOD_ALT,
@@ -72,10 +80,13 @@ use super::BoxKind;
 use crate::capture::{KeyCapture, Outcome};
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
-use crate::engine::{Backend, Command, Engine, Event, HotkeyId, KeySource, MacroSetup, RegisterError, Snapshot};
+use crate::engine::{
+    Backend, Command, Engine, Event, ExternalSetup, HotkeyId, KeySource, Launch, MacroSetup, RegisterError, Snapshot,
+};
 use crate::guard::{self, ButtonSet, Edge, MouseGuard, ReleaseScene, Source};
 use crate::hotkey::{Hotkey, Modifiers, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
+use crate::script::{Report, Scripts};
 
 /// Posted to a thread to make it look at its request queue.
 const WM_WAKE: u32 = WM_APP + 1;
@@ -96,6 +107,11 @@ static PRESS_WINDOW: [AtomicIsize; 3] = [const { AtomicIsize::new(0) }; 3];
 static HUD_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Set by the panic hook: the hooks then let everything through untouched.
 static PANICKING: AtomicBool = AtomicBool::new(false);
+/// A handle of the Job Object of the script that runs (0: none), for [`emergency_release`] only: it
+/// takes it out (and ends the job) or [`Job`] does when the run is over, never both.
+static SCRIPT_JOB: AtomicIsize = AtomicIsize::new(0);
+/// The declared buttons of that script, released by [`emergency_release`] if they are down.
+static SCRIPT_BUTTONS: AtomicU8 = AtomicU8::new(0);
 /// Keyboard events seen during the current capture, by the low-level hook and by the HUD's thread
 /// (written in the run log at the end of a capture, to understand it afterwards).
 static GLOBAL_KEYS_SEEN: AtomicU32 = AtomicU32::new(0);
@@ -219,8 +235,16 @@ fn release(button: MouseButton, log: bool) -> Result<bool, String> {
     Ok(delivery == Delivery::Sent)
 }
 
-/// Releases every button MacroHUD holds, from any thread; returns those it released.
+/// Releases every button MacroHUD holds, from any thread; returns those it released. The script of
+/// an external macro that runs is ended first (with everything it started), then those of its
+/// declared buttons that are down are released too.
 pub fn emergency_release() -> ButtonSet {
+    let job = SCRIPT_JOB.swap(0, Ordering::SeqCst);
+    if job != 0 {
+        // It can press nothing any more. (Its handle stays open: MacroHUD ends anyway.)
+        unsafe { TerminateJobObject(job as HANDLE, 1) };
+    }
+    let declared = ButtonSet::from_bits(SCRIPT_BUTTONS.swap(0, Ordering::SeqCst));
     let held = ButtonSet::from_bits(HELD.swap(0, Ordering::SeqCst));
     // Here nothing comes before the releases, not even a look at the windows: it follows them, when
     // the application has not had the time to handle its release yet (at worst it would get it
@@ -228,12 +252,86 @@ pub fn emergency_release() -> ButtonSet {
     for button in held.iter() {
         let _ = inject(button, false);
     }
+    let mut left_by_script = ButtonSet::EMPTY;
+    for button in declared.iter().filter(|b| !held.contains(*b) && key_down(button_vk(*b) as u16)) {
+        if inject(button, false).is_ok() {
+            left_by_script = left_by_script.with(button);
+        }
+    }
     for button in held.iter() {
         let scene = Scene::now(PRESS_WINDOW[button_index(button)].swap(0, Ordering::SeqCst));
         let delivery = scene.deliver(button);
         crate::log::write_now(scene.line(button, &delivery));
     }
-    held
+    if job != 0 {
+        let names: Vec<&str> = left_by_script.iter().map(MouseButton::phrase).collect();
+        crate::log::write_now(format!(
+            "Script de la macro externe arrêté de force ; boutons déclarés relâchés : {}.",
+            if names.is_empty() { "aucun".to_string() } else { names.join(", ") }
+        ));
+    }
+    held.union(left_by_script)
+}
+
+/// The Job Object of the script of an external macro: the script and every process it starts are
+/// in it, and end when it closes, which Windows does when MacroHUD ends, however it ends
+/// (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`). Dropped (the run is over): what is left in it ends.
+pub struct Job {
+    handle: isize,
+}
+
+impl Job {
+    /// Puts the script just started in a new Job Object; until the job is dropped, a crash ends it
+    /// and releases those of `buttons` that are down.
+    pub fn for_child(child: &std::process::Child, buttons: ButtonSet) -> Result<Job, String> {
+        use std::os::windows::io::AsRawHandle;
+        let handle = unsafe { CreateJobObjectW(null(), null()) };
+        if handle.is_null() {
+            return Err(format!("CreateJobObject, erreur {}", last_error()));
+        }
+        // Closed by its drop, whatever fails next.
+        let job = Job { handle: handle as isize };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+        let info = (&raw const limits).cast();
+        if unsafe { SetInformationJobObject(handle, JobObjectExtendedLimitInformation, info, size) } == 0 {
+            return Err(format!("SetInformationJobObject, erreur {}", last_error()));
+        }
+        if unsafe { AssignProcessToJobObject(handle, child.as_raw_handle() as HANDLE) } == 0 {
+            return Err(format!("AssignProcessToJobObject, erreur {}", last_error()));
+        }
+        // A handle of its own for the crash handler (a closed handle could be reused meanwhile).
+        let mut spare: HANDLE = null_mut();
+        let process = unsafe { GetCurrentProcess() };
+        if unsafe { DuplicateHandle(process, handle, process, &mut spare, 0, 0, DUPLICATE_SAME_ACCESS) } != 0 {
+            SCRIPT_BUTTONS.store(buttons.bits(), Ordering::SeqCst);
+            let older = SCRIPT_JOB.swap(spare as isize, Ordering::SeqCst);
+            if older != 0 {
+                unsafe { CloseHandle(older as HANDLE) };
+            }
+        }
+        Ok(job)
+    }
+
+    /// Ends every process in the job.
+    pub fn terminate(&self) {
+        unsafe { TerminateJobObject(self.handle as HANDLE, 1) };
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        // The crash handler has nothing more to end (unless it took its handle already).
+        SCRIPT_BUTTONS.store(0, Ordering::SeqCst);
+        let spare = SCRIPT_JOB.swap(0, Ordering::SeqCst);
+        unsafe {
+            if spare != 0 {
+                CloseHandle(spare as HANDLE);
+            }
+            CloseHandle(self.handle as HANDLE);
+        }
+    }
 }
 
 /// Sends `button`'s release message to `window`, at the pointer's place brought back inside it.
@@ -496,6 +594,8 @@ impl EngineWaker {
 enum HookRequest {
     /// Buttons held, buttons clicked (see `MouseGuard::watch`).
     Watch(ButtonSet, ButtonSet, SyncSender<Result<(), String>>),
+    /// The script of an external macro runs, or no longer (see `MouseGuard::shield_hud`).
+    GuardHud(bool, SyncSender<Result<(), String>>),
     StartCapture(Modifiers, SyncSender<Result<(), String>>),
     StopCapture,
     Quit,
@@ -595,7 +695,7 @@ unsafe extern "system" fn mouse_procedure(code: i32, wparam: WPARAM, lparam: LPA
             let source = if injected { Source::OtherProgram } else { Source::Hand };
             let swallow = with_hooks(|state| {
                 let on_hud = edge == Edge::Down
-                    && !state.guard.used().is_empty()
+                    && state.guard.needs_position()
                     && state.hud.is_some_and(|hud| point_in_window(hud, info.pt));
                 let verdict = state.guard.on_event(button, edge, source, on_hud, Instant::now());
                 if !verdict.stop.is_empty() {
@@ -723,6 +823,13 @@ fn hook_main(requests: Receiver<HookRequest>, ready: SyncSender<u32>, engine: En
                         });
                         let _ = answer.send(result.unwrap_or_else(|| Err("état des crochets occupé".into())));
                     }
+                    Ok(HookRequest::GuardHud(on, answer)) => {
+                        let result = with_hooks(|s| {
+                            s.guard.shield_hud(on);
+                            s.sync_mouse()
+                        });
+                        let _ = answer.send(result.unwrap_or_else(|| Err("état des crochets occupé".into())));
+                    }
                     Ok(HookRequest::StartCapture(modifiers, answer)) => {
                         let result = with_hooks(|s| {
                             s.capture = Some(KeyCapture::new(modifiers));
@@ -786,6 +893,9 @@ struct WindowsBackend {
     hooks: Option<HookThread>,
     hud: Option<isize>,
     next_id: HotkeyId,
+    scripts: Scripts,
+    /// Where the scripts' output goes: the engine's queue.
+    report: Report,
 }
 
 impl Backend for WindowsBackend {
@@ -872,6 +982,45 @@ impl Backend for WindowsBackend {
     fn layout_char(&self, key: Vk) -> Option<char> {
         layout_char(key)
     }
+
+    fn guard_hud(&mut self, on: bool) -> Result<(), String> {
+        match &self.hooks {
+            Some(hooks) => hooks.ask(|answer| HookRequest::GuardHud(on, answer)),
+            None if !on => Ok(()),
+            None => Err("le fil des crochets n'a pas démarré".into()),
+        }
+    }
+
+    fn launch(&mut self, launch: &Launch) -> Result<u64, String> {
+        self.scripts.launch(launch, self.report.clone())
+    }
+
+    fn tell(&mut self, run: u64, line: &str) -> Result<(), String> {
+        self.scripts.tell(run, line)
+    }
+
+    fn script_ended(&mut self, run: u64) -> Option<Option<i32>> {
+        self.scripts.ended(run)
+    }
+
+    fn kill(&mut self, run: u64) {
+        self.scripts.kill(run);
+    }
+
+    fn script_done(&mut self, run: u64) {
+        self.scripts.done(run);
+    }
+
+    fn release_down(&mut self, buttons: ButtonSet) -> ButtonSet {
+        let mut released = ButtonSet::EMPTY;
+        for button in buttons.iter().filter(|b| self.is_down(*b)) {
+            match inject(button, false) {
+                Ok(()) => released = released.with(button),
+                Err(e) => crate::log::write(format!("{} non relâché ({e}).", capitalized_name(button))),
+            }
+        }
+        released
+    }
 }
 
 /// Whether the window's thread holds the mouse: a press on it is not released yet (a drag of the
@@ -903,6 +1052,7 @@ fn point_in_window(hwnd: isize, point: POINT) -> bool {
 /// Starts the engine thread (which starts the hook thread).
 pub fn spawn_engine(
     setup: Vec<MacroSetup>,
+    externals: Vec<ExternalSetup>,
     hud: Option<isize>,
     repaint: Box<dyn Fn() + Send>,
 ) -> Result<EngineHandle, String> {
@@ -914,7 +1064,7 @@ pub fn spawn_engine(
     let for_hooks = sender.clone();
     let thread = std::thread::Builder::new()
         .name("macrohud-moteur".into())
-        .spawn(move || engine_main(setup, hud, receiver, for_hooks, ready_sender, publisher))
+        .spawn(move || engine_main(setup, externals, hud, receiver, for_hooks, ready_sender, publisher))
         .map_err(|e| format!("fil du moteur : {e}"))?;
     let thread_id =
         ready.recv_timeout(Duration::from_secs(5)).map_err(|_| "le fil du moteur n'a pas démarré".to_string())?;
@@ -924,6 +1074,7 @@ pub fn spawn_engine(
 
 fn engine_main(
     setup: Vec<MacroSetup>,
+    externals: Vec<ExternalSetup>,
     hud: Option<isize>,
     inputs: Receiver<Input>,
     sender: Sender<Input>,
@@ -933,7 +1084,12 @@ fn engine_main(
     ensure_message_queue();
     let thread_id = unsafe { GetCurrentThreadId() };
     let _ = ready.send(thread_id);
-    let hooks = match HookThread::spawn(EngineWaker { thread_id, sender }, hud) {
+    let waker = EngineWaker { thread_id, sender };
+    let report: Report = {
+        let waker = waker.clone();
+        Arc::new(move |run, output| waker.send(Event::Script { run, output }))
+    };
+    let hooks = match HookThread::spawn(waker, hud) {
         Ok(hooks) => Some(hooks),
         Err(e) => {
             crate::log::write(format!("Surveillance de la souris impossible : {e}"));
@@ -950,7 +1106,8 @@ fn engine_main(
     } else {
         "Minuterie du moteur : ordinaire (ce Windows n'a pas la haute résolution) ; les clics gardent leur battement."
     });
-    let mut engine = Engine::new(WindowsBackend { hooks, hud, next_id: 0 }, &setup);
+    let backend = WindowsBackend { hooks, hud, next_id: 0, scripts: Scripts::default(), report };
+    let mut engine = Engine::new(backend, &setup, externals);
     engine.start();
     publisher.publish(engine.snapshot());
 
@@ -963,7 +1120,7 @@ fn engine_main(
         while unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             match msg.message {
                 WM_HOTKEY => {
-                    crate::crash::crash_test_point(engine.guarded_buttons());
+                    crate::crash::crash_test_point(engine.crash_test_buttons());
                     engine.event(Event::Hotkey(msg.wParam as HotkeyId), Instant::now());
                     raise = true;
                 }
@@ -975,7 +1132,7 @@ fn engine_main(
             match inputs.try_recv() {
                 Ok(Input::Command(command)) => {
                     if matches!(command, Command::Stop(_)) {
-                        crate::crash::crash_test_point(engine.guarded_buttons());
+                        crate::crash::crash_test_point(engine.crash_test_buttons());
                     }
                     engine.command(command, Instant::now());
                 }
@@ -993,8 +1150,20 @@ fn engine_main(
             raise_window(hwnd);
         }
     }
-    engine.shutdown(Instant::now());
+    // Quitting: the script of an external macro has a moment to stop, its output still read.
+    let mut next = engine.shutdown(Instant::now());
     publisher.publish(engine.snapshot());
+    while let Some(at) = next {
+        timer.wait(Some(at));
+        while unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {}
+        while let Ok(input) = inputs.try_recv() {
+            if let Input::Event(event) = input {
+                engine.event(event, Instant::now());
+            }
+        }
+        next = engine.shutdown(Instant::now());
+        publisher.publish(engine.snapshot());
+    }
 }
 
 /// Wakes the engine thread at the engine's next deadline, to the millisecond when Windows can (a
@@ -1485,8 +1654,14 @@ mod tests {
     fn a_hotkey_already_registered_is_reported_as_taken() {
         let hotkey =
             Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl).with(Modifier::Alt).with(Modifier::Shift), vk::F24);
-        let mut first = WindowsBackend { hooks: None, hud: None, next_id: 100 };
-        let mut second = WindowsBackend { hooks: None, hud: None, next_id: 200 };
+        let backend = |next_id| WindowsBackend {
+            hooks: None,
+            hud: None,
+            next_id,
+            scripts: Scripts::default(),
+            report: Arc::new(|_, _| {}),
+        };
+        let (mut first, mut second) = (backend(100), backend(200));
         let id = first.register_hotkey(hotkey).expect("a rare combination is free");
         assert_eq!(second.register_hotkey(hotkey), Err(RegisterError::Taken));
         first.unregister_hotkey(id);
@@ -1503,9 +1678,72 @@ mod tests {
         hooks.ask(|a| HookRequest::Watch(middle, ButtonSet::EMPTY, a)).expect("mouse hook, held button");
         hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, middle, a)).expect("mouse hook, clicked button");
         hooks.ask(|a| HookRequest::Watch(ButtonSet::EMPTY, ButtonSet::EMPTY, a)).expect("no mouse hook");
+        hooks.ask(|a| HookRequest::GuardHud(true, a)).expect("mouse hook, a script runs");
+        hooks.ask(|a| HookRequest::GuardHud(false, a)).expect("no mouse hook again");
         hooks.ask(|a| HookRequest::StartCapture(Modifiers::NONE, a)).expect("keyboard hook");
         hooks.tell(HookRequest::StopCapture);
         drop(hooks);
+    }
+
+    /// How many processes are in the job.
+    fn processes_in(job: &Job) -> u32 {
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation, QueryInformationJobObject,
+        };
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let size = std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32;
+        let asked = unsafe {
+            QueryInformationJobObject(
+                job.handle as HANDLE,
+                JobObjectBasicAccountingInformation,
+                (&raw mut info).cast(),
+                size,
+                null_mut(),
+            )
+        };
+        assert_ne!(asked, 0, "QueryInformationJobObject, erreur {}", last_error());
+        info.ActiveProcesses
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let start = Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A script in its Job Object, and what it starts: they end together, by the engine (`terminate`)
+    /// or by the crash handler (`emergency_release`), which forgets the job once it is dropped.
+    #[test]
+    fn a_script_ends_in_its_job_with_everything_it_started() {
+        let _one = crate::script::ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // `cmd` starts `ping`, which runs for a while: two processes in the job (at least).
+        let start = || {
+            std::process::Command::new("cmd")
+                .args(["/c", "ping -n 30 127.0.0.1 >nul"])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .expect("cmd")
+        };
+        let mut child = start();
+        let job = Job::for_child(&child, ButtonSet::EMPTY).expect("job");
+        assert_ne!(SCRIPT_JOB.load(Ordering::SeqCst), 0, "known to the crash handler");
+        wait_until("ping should start", || processes_in(&job) >= 2);
+        job.terminate();
+        wait_until("both should end", || processes_in(&job) == 0);
+        assert!(child.wait().is_ok());
+        drop(job);
+        assert_eq!(SCRIPT_JOB.load(Ordering::SeqCst), 0, "forgotten once dropped");
+
+        let mut child = start();
+        let job = Job::for_child(&child, ButtonSet::EMPTY).expect("job");
+        wait_until("ping should start", || processes_in(&job) >= 2);
+        assert!(emergency_release().is_empty(), "no button was down");
+        wait_until("the crash handler ends both", || processes_in(&job) == 0);
+        assert!(child.wait().is_ok());
+        assert_eq!(SCRIPT_JOB.load(Ordering::SeqCst), 0);
+        drop(job);
     }
 
     /// The run log says what Windows accepted about the HUD's frame (Windows 10 has no border nor

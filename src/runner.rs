@@ -7,19 +7,19 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::engine::{Command, Event, Snapshot};
+use crate::engine::{Command, Event, SCRIPT_STOP_WAIT, Snapshot};
 
 /// What the engine thread receives.
-#[cfg_attr(not(windows), allow(dead_code))] // events come from the Windows hooks
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Command(Command),
     Event(Event),
     Shutdown,
 }
 
-/// How long quitting waits for the engine to release everything and stop.
-const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+/// How long quitting waits for the engine to release everything and stop: the script of an external
+/// macro has [`SCRIPT_STOP_WAIT`] to quit, then it is stopped by force; one more second for that.
+const SHUTDOWN_WAIT: Duration = SCRIPT_STOP_WAIT.saturating_add(Duration::from_secs(1));
 
 /// The app's handle on the engine thread.
 pub struct EngineHandle {

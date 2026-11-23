@@ -4,17 +4,20 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::BoxKind;
 use crate::clock::Stamp;
 use crate::contract::MouseButton;
-use crate::engine::{Backend, Command, Engine, HotkeyId, MacroSetup, RegisterError, Snapshot};
+use crate::engine::{
+    Backend, Command, Engine, Event, ExternalSetup, HotkeyId, Launch, MacroSetup, RegisterError, Snapshot,
+};
 use crate::guard::ButtonSet;
 use crate::hotkey::{Hotkey, Vk};
 use crate::runner::{EngineHandle, Input, Publisher};
+use crate::script::{Report, Scripts};
 
 /// Buttons "held" by the stand-in backend.
 static HELD: AtomicU8 = AtomicU8::new(0);
@@ -58,6 +61,18 @@ pub fn message_box(title: &str, text: &str, kind: BoxKind) {
     eprintln!("[{title}] ({kind:?}) {text}");
 }
 
+/// No Job Object outside Windows: a script is ended with `Child::kill` (itself only, not what it
+/// started), which is enough to develop and test.
+pub struct Job;
+
+impl Job {
+    pub fn for_child(_child: &std::process::Child, _buttons: ButtonSet) -> Result<Job, String> {
+        Ok(Job)
+    }
+
+    pub fn terminate(&self) {}
+}
+
 /// The HUD window: nothing to place outside Windows.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HudWindow;
@@ -89,10 +104,13 @@ impl HudWindow {
     pub fn key_capture_tick(&self) {}
 }
 
-/// A backend that pretends: presses go to the log, hotkeys always register (unless used twice).
+/// A backend that pretends: presses go to the log, hotkeys always register (unless used twice). The
+/// scripts of external macros run for real.
 struct StandIn {
     hotkeys: Vec<(HotkeyId, Hotkey)>,
     next_id: HotkeyId,
+    scripts: Scripts,
+    report: Report,
 }
 
 impl Backend for StandIn {
@@ -149,26 +167,61 @@ impl Backend for StandIn {
     fn layout_char(&self, _key: Vk) -> Option<char> {
         None
     }
+    fn guard_hud(&mut self, _on: bool) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&mut self, launch: &Launch) -> Result<u64, String> {
+        self.scripts.launch(launch, self.report.clone())
+    }
+    fn tell(&mut self, run: u64, line: &str) -> Result<(), String> {
+        self.scripts.tell(run, line)
+    }
+    fn script_ended(&mut self, run: u64) -> Option<Option<i32>> {
+        self.scripts.ended(run)
+    }
+    fn kill(&mut self, run: u64) {
+        self.scripts.kill(run);
+    }
+    fn script_done(&mut self, run: u64) {
+        self.scripts.done(run);
+    }
+    fn release_down(&mut self, buttons: ButtonSet) -> ButtonSet {
+        // Nothing the scripts press is known here.
+        let _ = buttons;
+        ButtonSet::EMPTY
+    }
 }
 
 /// Starts the engine thread.
 pub fn spawn_engine(
     setup: Vec<MacroSetup>,
+    externals: Vec<ExternalSetup>,
     _hud: Option<isize>,
     repaint: Box<dyn Fn() + Send>,
 ) -> Result<EngineHandle, String> {
     let (sender, receiver) = mpsc::channel::<Input>();
     let shared = Arc::new(Mutex::new(Snapshot::default()));
     let publisher = Publisher::new(shared.clone(), repaint);
+    let for_scripts = sender.clone();
     let thread = std::thread::Builder::new()
         .name("macrohud-moteur".into())
-        .spawn(move || engine_main(setup, receiver, publisher))
+        .spawn(move || engine_main(setup, externals, receiver, for_scripts, publisher))
         .map_err(|e| format!("fil du moteur : {e}"))?;
     Ok(EngineHandle::new(sender, Arc::new(|| {}), shared, thread))
 }
 
-fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: Publisher) {
-    let mut engine = Engine::new(StandIn { hotkeys: Vec::new(), next_id: 0 }, &setup);
+fn engine_main(
+    setup: Vec<MacroSetup>,
+    externals: Vec<ExternalSetup>,
+    inputs: Receiver<Input>,
+    sender: Sender<Input>,
+    mut publisher: Publisher,
+) {
+    let report: Report = Arc::new(move |run, output| {
+        let _ = sender.send(Input::Event(Event::Script { run, output }));
+    });
+    let backend = StandIn { hotkeys: Vec::new(), next_id: 0, scripts: Scripts::default(), report };
+    let mut engine = Engine::new(backend, &setup, externals);
     engine.start();
     publisher.publish(engine.snapshot());
     loop {
@@ -177,7 +230,7 @@ fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: P
         match inputs.recv_timeout(wait) {
             Ok(Input::Command(command)) => {
                 if matches!(command, Command::Stop(_)) {
-                    crate::crash::crash_test_point(engine.guarded_buttons());
+                    crate::crash::crash_test_point(engine.crash_test_buttons());
                 }
                 engine.command(command, Instant::now());
             }
@@ -188,6 +241,16 @@ fn engine_main(setup: Vec<MacroSetup>, inputs: Receiver<Input>, mut publisher: P
         engine.tick(Instant::now());
         publisher.publish(engine.snapshot());
     }
-    engine.shutdown(Instant::now());
+    // Quitting: the script of an external macro has a moment to stop, its output still read.
+    let mut next = engine.shutdown(Instant::now());
     publisher.publish(engine.snapshot());
+    while let Some(at) = next {
+        match inputs.recv_timeout(at.saturating_duration_since(Instant::now())) {
+            Ok(Input::Event(event)) => engine.event(event, Instant::now()),
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => std::thread::sleep(at.saturating_duration_since(Instant::now())),
+        }
+        next = engine.shutdown(Instant::now());
+        publisher.publish(engine.snapshot());
+    }
 }

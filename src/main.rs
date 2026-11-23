@@ -6,6 +6,8 @@
 //! - `hud`: the HUD itself, owned by the "visuel" session;
 //! - `app`: the window, the glue between the HUD and the engine, the settings;
 //! - `engine`: the macros' state machine, independent of Windows (tested on Linux);
+//! - `external`, `script`: the external macros (D-32): their declarations and the lines of their
+//!   scripts (pure logic), the processes of their scripts;
 //! - `hotkey`, `capture`, `guard`: hotkeys and their rules, capture of a new hotkey, physical-click
 //!   guard (pure logic, tested on Linux);
 //! - `settings`, `session`, `log`, `crash`, `clock`: settings file, abrupt-end marker, run log,
@@ -23,6 +25,7 @@ mod clock;
 mod contract;
 mod crash;
 mod engine;
+mod external;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod guard;
 mod hotkey;
@@ -31,6 +34,7 @@ mod log;
 mod macros;
 mod platform;
 mod runner;
+mod script;
 mod session;
 mod settings;
 
@@ -111,7 +115,14 @@ fn run() -> ExitCode {
         log::write(format!("Réglages corrigés non enregistrés : {e}"));
     }
 
-    let result = app::run(app::Startup { dir, settings: loaded.settings, messages });
+    // The external macros (D-32): a declaration that cannot be read is only written in the run log.
+    let own: Vec<&str> = macros::CATALOG.iter().map(|def| def.id.0).collect();
+    let (externals, lines) = external::read_all(&dir.join(external::FOLDER), &own);
+    for line in lines {
+        log::write(line);
+    }
+
+    let result = app::run(app::Startup { dir, settings: loaded.settings, messages, externals });
 
     // Whatever happened, nothing stays pressed.
     let released = platform::emergency_release();
