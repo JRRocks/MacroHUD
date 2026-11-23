@@ -304,8 +304,9 @@ impl<B: Backend> Engine<B> {
             }
             (End::Exited(code), Some(cause)) => {
                 let why = self.cause_text(i, cause);
+                let released = self.release_after(i, code);
                 crate::log::write(format!(
-                    "« {name} » arrêtée ({why}) : son script a quitté ({}) après {seconds} s.",
+                    "« {name} » arrêtée ({why}) : son script a quitté ({}) après {seconds} s{released}.",
                     code_text(code)
                 ));
             }
@@ -313,7 +314,11 @@ impl<B: Backend> Engine<B> {
                 let x = self.external_mut(i);
                 if let Some(text) = x.said.finished.clone() {
                     x.finished = Some(text.clone());
-                    crate::log::write(format!("« {name} » terminée ({}) après {seconds} s : {text}", code_text(code)));
+                    let released = self.release_after(i, code);
+                    crate::log::write(format!(
+                        "« {name} » terminée ({}) après {seconds} s : {text}{released}",
+                        code_text(code)
+                    ));
                 } else {
                     // Ended badly: what it may still hold is released.
                     let buttons = x.declaration.buttons;
@@ -341,6 +346,17 @@ impl<B: Backend> Engine<B> {
         if let Some((j, trigger)) = self.pending.take() {
             self.start_macro(j, trigger, now);
         }
+    }
+
+    /// After a stop it was asked for, or its `fin`: a script that quits with code 0 has released what
+    /// it held (protocol); with any other end, its declared buttons still down are released (D-47).
+    /// Returns the end of the line for the run log.
+    fn release_after(&mut self, i: usize, code: Option<i32>) -> String {
+        if code == Some(0) {
+            return String::new();
+        }
+        let released = self.backend.release_down(self.external(i).declaration.buttons);
+        format!(" ; boutons déclarés relâchés : {}", names(released))
     }
 
     /// A new value for a setting of external macro `i`; it goes to the script at once if it runs.
@@ -562,6 +578,36 @@ mod tests {
             (MacroStatus::Stopped, ExternalLine::Stopped(Some("limite 100 clics".into())), None)
         );
         assert_eq!(e.next_deadline(), None);
+    }
+
+    /// Asked to stop, or after its `fin`: with code 0 it released what it held; with another end,
+    /// its declared buttons still down are released (D-47).
+    #[test]
+    fn a_stop_or_a_fin_with_an_error_code_releases_its_buttons() {
+        for (fin, code, released) in [
+            (false, Some(0), false),
+            (false, Some(1), true),
+            (false, None, true),
+            (true, Some(0), false),
+            (true, Some(2), true),
+        ] {
+            let mut e = engine_with(Fake { down: ButtonSet::only(MouseButton::Right), ..Fake::default() });
+            let now = Instant::now();
+            f10(&mut e, now);
+            if fin {
+                line(&mut e, "fin 100/100 clics", now);
+            } else {
+                f10(&mut e, now + MS);
+            }
+            e.backend_mut().ended = Some(code);
+            closed(&mut e, now + 2 * MS);
+            let made = calls(&mut e);
+            let expected = Call::ReleaseDown(ButtonSet::only(MouseButton::Right));
+            assert_eq!(made.contains(&expected), released, "fin {fin}, code {code:?}: {made:?}");
+            assert_eq!(e.backend().down.is_empty(), released, "fin {fin}, code {code:?}");
+            assert_eq!(view(&e).status, MacroStatus::Stopped);
+            assert_eq!(view(&e).alert, None, "no box: it was asked to stop, or said « fin »");
+        }
     }
 
     #[test]

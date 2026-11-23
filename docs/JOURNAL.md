@@ -21,6 +21,25 @@ Gabarit :
 
 ---
 
+## 2026-11-23 · Macros externes : boutons relâchés aussi après une sortie en erreur (P4.4, suite)
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, après le commit de fin `61aa90c` ; un
+  nouveau commit de fin `[ETAPE-FINIE programmation-macros-externes]` le remplace : c'est lui (et
+  l'artefact de sa CI) qui compte.
+- **Objectif** : relu après le commit de fin, un cas où un bouton pouvait rester enfoncé.
+- **Réalisé** : un script à qui MacroHUD demande l'arrêt, ou qui dit `fin`, puis quitte avec un autre
+  code que 0 (il plante pendant son arrêt, par exemple) pouvait laisser enfoncé un bouton déclaré :
+  MacroHUD le croyait sur parole. Désormais ses boutons déclarés encore enfoncés sont relâchés, et
+  `macrohud.log` le dit (« … ; boutons déclarés relâchés : le bouton droit. ») ; seul le code 0
+  après `arret` ou après `fin` laisse les boutons tels quels.
+- **Décisions** : D-47 (remplace D-40).
+- **Vérifications** : `cargo fmt --check`, clippy Linux et Windows : OK ; `cargo test` : 182 tests OK
+  dans la session, dont le nouveau (arrêt demandé ou `fin`, suivis du code 0, 1, 2 ou d'aucun code).
+  CI de ce commit : voir le commit de fin.
+- **Non vérifié sur le PC** : inchangé (R35 à R44).
+- **Prochaine étape** : inchangée.
+
 ## 2026-11-23 · Macros externes : le moteur, le script d'exemple et ses essais (P4.4)
 
 - **Session** : programmation

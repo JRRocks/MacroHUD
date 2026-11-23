@@ -16,8 +16,8 @@
 //! - no button is pressed unless the physical-click guard already watches it;
 //! - the button released is always the one actually pressed, even if the options changed since;
 //! - stopping, changing the options, quitting: whatever is held is released first;
-//! - a script stopped by force, or that ended without `fin`: its declared buttons still down are
-//!   released;
+//! - a script stopped by force, or that quits without `fin` or with an exit code other than 0: its
+//!   declared buttons still down are released;
 //! - one macro at a time (D-20): starting one stops the other first (and waits for a script to end);
 //! - no automatic click lands on the HUD (D-22): « Multi-clic » waits while the mouse is on it, a
 //!   script is told to pause, and the guard drops the injected clicks on the HUD while it runs.
