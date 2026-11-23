@@ -62,7 +62,15 @@ Gabarit :
     réseau de la session). Fenêtre sous Linux : `_NET_WM_ICON` 64 × 64.
   - `maquettes/macro-externe/resultat.html` dans Chromium à 400 et 1280 px : aucun défilement
     horizontal, aucun script, aucune requête vers l'extérieur.
-  - CI de la branche : P4.2 verte (exécution 34) ; celle de P4.5 est écrite dans le commit de fin.
+  - CI de la branche : P4.2 verte (exécution 34) ; P4.5 verte (exécution 38 : tests Linux et
+    Windows, exécutable).
+  - Fusion d'essai, non poussée, avec le moteur `74348b3` (`claude/gifted-hypatia-g84kg1`) : sans
+    conflit, 179 tests et clippy passent. Sa vraie fenêtre sous Linux, avec une macro « Exemple »
+    déclarée dans un dossier de brouillon (script `sh` qui parle le protocole) : trois macros,
+    « Arrêtée · limite 100 clics » ; réglages ouverts (290 × 342), « ▶ » dessiné ; « Activer » :
+    « Active · 12… » et la pastille « Attente » venues du script ; clic sur le cran 250 en marche :
+    « 250 clics », la macro continue (`réglage « limite » à 250` au journal) ; arrêt par le HUD :
+    `arret` envoyé, script sorti (code 0), « Arrêtée · limite 250 clics », `reglages.json` garde 250.
 - **Différences avec l'aperçu** : le vrai HUD garde 290 px quand le dessin de l'aperçu en fait 316 ;
   à côté d'une pastille, le texte d'état se coupe donc (« Active · 12… »), comme l'aperçu le
   prévoit quand la place manque (D-55), et la ligne d'aide et l'encadré coupent leurs lignes
@@ -76,8 +84,9 @@ Gabarit :
   - Le texte d'état coupé à côté d'une pastille peut gêner avec les vrais textes de la macro de
     l'utilisateur ; une autre disposition (pastille sur la ligne du nom) le laisserait entier, à
     valider d'abord (D-55).
-  - Le moteur des macros externes n'est pas sur cette branche : sous Linux, la vraie fenêtre ne
-    montre encore aucune macro externe ; tout est vérifié par les rendus et les tests.
+  - Le moteur des macros externes n'est pas sur cette branche (seulement son contrat) : la vraie
+    fenêtre n'a été vue avec une macro externe que dans la fusion d'essai ci-dessus. Sous Linux, la
+    souris n'est jamais vue sur le HUD : « En pause · souris ici » n'y est vérifié que par les rendus.
 - **Prochaine étape** : réunion avec le moteur P4.4 sur `integration/…`, puis P4.6.
 
 ## 2026-11-23 · Aperçu de la ligne d'une macro externe validé
