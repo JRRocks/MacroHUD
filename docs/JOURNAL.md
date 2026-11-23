@@ -21,6 +21,65 @@ Gabarit :
 
 ---
 
+## 2026-11-23 · Le logo dans l'exécutable, la ligne d'une macro externe dans le HUD
+
+- **Session** : visuel
+- **Branche et commit** : `claude/gifted-turing-0izrcw`, avancée rapide sur `main` (`c44969e`) ;
+  P4.2 : `c81b815`, puis `[ETAPE-FINIE visuel-icone]` (`fc49ffa`) ; fusion du contrat
+  `claude/gifted-hypatia-g84kg1` (« P4.4 contrat », `b703d23`, fusion `135b923`) ; P4.5 : le commit
+  qui suit cette entrée, puis `[ETAPE-FINIE visuel-macros-externes]`.
+- **Objectif** : P4.2, le logo (D-33) dans l'exécutable et la fenêtre ; P4.5, la ligne d'une macro
+  externe selon l'aperçu validé (D-37).
+- **Réalisé** :
+  - P4.2 : `src/hud/icone.ico`, copie exacte de `maquettes/logo/MacroHUD.ico` : `build.rs` en fait
+    l'icône de l'exécutable (dix tailles). `hud::window_icon()` (`src/hud/logo.rs`) rend l'image de
+    64 px du logo, décodée sans dépendance de plus (D-50).
+  - P4.5, `src/hud/` : les macros externes du contrat (`HudState::external_macros`) viennent sous
+    celles de MacroHUD, avec une ligne de même forme : « ■ Arrêtée · texte », « ● Active · texte »,
+    « ❚❚ En pause · raison », « ✓ Terminée · texte » et son liseré bleu ; la pastille d'étape (ambre,
+    verte, bleue, grise) entre le texte et la touche ; l'encadré ambre sous la ligne, un seul
+    paragraphe comme l'aperçu (D-57) ; les réglages : un curseur par réglage entier (curseur de
+    « Multi-clic » rendu générique : bornes, pas, crans s'ils sont assez espacés, D-51), qui
+    demande `HudAction::SetSetting` aussitôt, arrêtée ou en marche, puis le raccourci (« Aucun »
+    s'il n'y en a pas, D-52) et la ligne d'aide ; replié, la capsule montre l'état et la pastille,
+    jamais plus large que le HUD (D-54). « ▶ » et « ■ », absents de la police, deviennent les
+    icônes du HUD (D-56).
+  - Rendus : `maquettes/rendu-egui/externe-*@2x.png` (les huit vues de l'aperçu, les trois couleurs
+    de pastille à part, et trois cas que l'aperçu ne montre pas) ; `situation-20` à `32`.
+    `maquettes/macro-externe/resultat.html` : chaque vue de l'aperçu (photographiée par
+    `maquettes/outils/apercu-externe.mjs`) à côté du vrai HUD.
+- **Décisions** : D-50 à D-57 (développeur).
+- **Vérifications** :
+  - `cargo fmt --check` ; `cargo clippy --all-targets --locked -- -D warnings`, sous Linux et avec
+    `--target x86_64-pc-windows-msvc` ; `cargo test --locked` : 148 tests passent, dont 27 du HUD
+    (lignes et textes des macros externes, tailles, curseurs en marche et arrêtés, pastilles et
+    liseré au pixel, signes ▶ et ■).
+  - Les rendus des macros de MacroHUD (vues, situations 1 à 19, « Multi-clic ») sont identiques à
+    l'octet avant et après ces changements.
+  - Icône compilée dans l'exécutable : journal de la CI, à code égal, 0.1.33 fait 6 036 480 octets
+    et 0.1.34 6 355 456 (+318 976 : deux fois le logo de 157 135 octets, ressource de l'exécutable et
+    image de la fenêtre, et le décodeur). L'artefact n'a pas pu être lu ici (stockage bloqué par le
+    réseau de la session). Fenêtre sous Linux : `_NET_WM_ICON` 64 × 64.
+  - `maquettes/macro-externe/resultat.html` dans Chromium à 400 et 1280 px : aucun défilement
+    horizontal, aucun script, aucune requête vers l'extérieur.
+  - CI de la branche : P4.2 verte (exécution 34) ; celle de P4.5 est écrite dans le commit de fin.
+- **Différences avec l'aperçu** : le vrai HUD garde 290 px quand le dessin de l'aperçu en fait 316 ;
+  à côté d'une pastille, le texte d'état se coupe donc (« Active · 12… »), comme l'aperçu le
+  prévoit quand la place manque (D-55), et la ligne d'aide et l'encadré coupent leurs lignes
+  ailleurs. La capsule garde le point « ● » d'aujourd'hui (l'aperçu y montre « ■ », D-54).
+- **À vérifier sur le PC** :
+  - le logo de `MacroHUD.<version>.exe` dans l'Explorateur, et celui de la fenêtre dans la barre des
+    tâches et Alt+Tab, à 100 % et à 150 ou 200 % d'échelle ;
+  - une vraie macro externe dans le HUD, une fois le moteur P4.4 réuni : pastille, « En pause »,
+    « Terminée », encadré, curseurs réglés en marche, capsule repliée (P4.6).
+- **Problèmes et dette** :
+  - Le texte d'état coupé à côté d'une pastille peut gêner avec les vrais textes de la macro de
+    l'utilisateur ; une autre disposition (pastille sur la ligne du nom) le laisserait entier, à
+    valider d'abord (D-55).
+  - Le moteur des macros externes n'est pas sur cette branche : sous Linux, la vraie fenêtre ne
+    montre encore aucune macro externe ; tout est vérifié par les rendus et les tests.
+- **Prochaine étape** : réunion avec le moteur P4.4 sur `integration/…`, puis P4.6.
+
 ## 2026-11-23 · Aperçu de la ligne d'une macro externe validé
 
 - **Session** : maître (PC)

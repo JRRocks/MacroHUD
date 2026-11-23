@@ -88,9 +88,120 @@ pub fn wrap(text: &str, size: f32, weight: f32, max_width: f32) -> Vec<String> {
         galley
             .rows
             .iter()
-            .map(|row| row.glyphs.iter().map(|g| g.chr).collect::<String>().trim_end().to_owned())
+            // Only plain spaces end a row: the no-break spaces of a sign's room stay (see `SIGNS`).
+            .map(|row| row.glyphs.iter().map(|g| g.chr).collect::<String>().trim_end_matches([' ', '\n']).to_owned())
             .collect()
     })
+}
+
+/// The HUD's signs that Inter lacks, in a text from outside MacroHUD (the help line or the box of
+/// an external macro): « ▶ » (Activer) and « ■ » (Arrêter), drawn as the HUD's icons (D-56). In the
+/// text laid out, each one becomes a zero-width marker (once for ▶, twice for ■) and three no-break
+/// spaces, the room of its icon: egui never cuts a line inside it.
+const SIGN_MARK: char = '\u{FEFF}';
+const SIGN_ROOM: &str = "\u{A0}\u{A0}\u{A0}";
+
+/// `text` with room for its signs (see [`SIGN_MARK`]).
+pub fn with_sign_room(text: &str) -> String {
+    text.replace('▶', &format!("{SIGN_MARK}{SIGN_ROOM}")).replace('■', &format!("{SIGN_MARK}{SIGN_MARK}{SIGN_ROOM}"))
+}
+
+/// The signs of a laid-out text: each sign, and the middle of its room from the galley's left.
+pub fn sign_spots(galley: &Galley) -> Vec<(char, f32)> {
+    let mut spots = Vec::new();
+    for row in &galley.rows {
+        let glyphs = &row.glyphs;
+        let mut k = 0;
+        while k < glyphs.len() {
+            if glyphs[k].chr != SIGN_MARK {
+                k += 1;
+                continue;
+            }
+            let marks = glyphs[k..].iter().take_while(|g| g.chr == SIGN_MARK).count();
+            let room: Vec<_> = glyphs[k + marks..].iter().take_while(|g| g.chr == '\u{A0}').take(3).collect();
+            if let (Some(first), Some(last)) = (room.first(), room.last()) {
+                let middle = row.pos.x + (first.pos.x + last.pos.x + last.advance_width) / 2.0;
+                spots.push((if marks >= 2 { '■' } else { '▶' }, middle));
+            }
+            k += marks + room.len();
+        }
+    }
+    spots
+}
+
+/// A paragraph made of sections of one size, each with its weight and colour (« ▲ Title. Text »),
+/// cut into rows by the measuring fonts once: painted row by row, it keeps these very rows at any
+/// scale, so that the layout and the painting agree.
+pub struct Paragraph {
+    /// Each row: runs of text with their weight and colour.
+    rows: Vec<Vec<(String, f32, Color32)>>,
+    size: f32,
+    /// Room left free before the first row (an icon goes there).
+    indent: f32,
+}
+
+impl Paragraph {
+    pub fn new(sections: &[(&str, f32, Color32)], size: f32, max_width: f32, indent: f32) -> Self {
+        let mut job = LayoutJob::default();
+        for (k, &(text, weight, color)) in sections.iter().enumerate() {
+            job.append(text, if k == 0 { indent } else { 0.0 }, format(size, weight, color));
+        }
+        job.wrap.max_width = max_width;
+        let counts: Vec<usize> = measure(job, |galley| galley.rows.iter().map(|row| row.glyphs.len()).collect());
+        let chars: Vec<(char, usize)> =
+            sections.iter().enumerate().flat_map(|(k, (text, _, _))| text.chars().map(move |c| (c, k))).collect();
+        let mut rows = Vec::new();
+        let mut at = 0;
+        for count in counts {
+            let row = &chars[at.min(chars.len())..(at + count).min(chars.len())];
+            at += count;
+            // A row ends on the space where it was cut: not drawn.
+            let kept = row.len() - row.iter().rev().take_while(|(c, _)| c.is_whitespace()).count();
+            let mut runs: Vec<(String, usize)> = Vec::new();
+            for &(c, k) in &row[..kept] {
+                match runs.last_mut() {
+                    Some((run, section)) if *section == k => run.push(c),
+                    _ => runs.push((c.to_string(), k)),
+                }
+            }
+            rows.push(runs.into_iter().map(|(run, k)| (run, sections[k].1, sections[k].2)).collect());
+        }
+        Paragraph { rows, size, indent }
+    }
+
+    /// Number of rows.
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// The text of each row, for tests.
+    #[cfg(test)]
+    pub fn row_texts(&self) -> Vec<String> {
+        self.rows.iter().map(|runs| runs.iter().map(|(run, _, _)| run.as_str()).collect()).collect()
+    }
+
+    /// Paints the rows from `left`, the first at `top`, `line_height` apart. Returns where its
+    /// signs go (see [`with_sign_room`]): each sign and the centre of its room.
+    pub fn paint(&self, painter: &Painter, left: f32, top: f32, line_height: f32) -> Vec<(char, Pos2)> {
+        let mut signs = Vec::new();
+        for (r, runs) in self.rows.iter().enumerate() {
+            let mut job = LayoutJob::default();
+            for (k, (run, weight, color)) in runs.iter().enumerate() {
+                let lead = if r == 0 && k == 0 { self.indent } else { 0.0 };
+                job.append(run, lead, format(self.size, *weight, *color));
+            }
+            let galley = painter.layout_job(job);
+            let row_top = top + r as f32 * line_height;
+            put(painter, &galley, left, row_top, line_height);
+            let x = Pos2::new(left, 0.0).round_to_pixels(painter.pixels_per_point()).x;
+            signs.extend(
+                sign_spots(&galley)
+                    .into_iter()
+                    .map(|(sign, mid)| (sign, Pos2::new(x + mid, row_top + line_height / 2.0))),
+            );
+        }
+        signs
+    }
 }
 
 // Painting -------------------------------------------------------------------------------------

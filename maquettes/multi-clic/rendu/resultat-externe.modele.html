@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MacroHUD · macro externe dans le vrai HUD</title>
+<style>
+*{box-sizing:border-box}
+html{background:#e9ecf0}
+body{margin:0;color:#1c1d20;font:16px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:28px;line-height:1.2;margin:0 0 10px;letter-spacing:-.01em}
+h2{font-size:22px;line-height:1.25;margin:0 0 8px}
+h3{font-size:17px;margin:20px 0 6px}
+p{margin:0 0 10px}
+.intro{max-width:800px;color:#3f4147}
+section{background:#f8f9fb;border:1px solid #d5dae1;border-radius:14px;padding:18px 16px 20px;margin-top:22px}
+.bilan{margin:12px 0 0;padding:12px 14px;border-left:4px solid #1f9b57;background:#e3f2e8;border-radius:0 8px 8px 0}
+ul.liste{margin:6px 0 0;padding-left:20px;max-width:900px}
+ul.liste li{margin-top:4px}
+.paire{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px;max-width:1000px;align-items:start}
+.pile{display:flex;flex-direction:column;gap:10px}
+figure{margin:0}
+.tuile{display:flex;justify-content:center;padding:6px 0;border-radius:10px;background:#3d6f99}
+.tuile img{display:block;max-width:100%;height:auto}
+figcaption{margin-top:6px;font-size:15px;line-height:1.4;color:#2b2d32}
+.note{font-size:14px;color:#55585f;max-width:900px}
+code{font:14px/1.4 Consolas,"Cascadia Mono",monospace;background:#e6e9ee;padding:1px 4px;border-radius:4px}
+@media (max-width:480px){
+  main{padding:18px 12px 32px}
+  h1{font-size:24px}
+  section{padding:14px 10px 16px}
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Macro externe : le vrai HUD à côté de l'aperçu</h1>
+<p class="intro">La ligne d'une macro externe est codée dans le HUD (P4.5), d'après l'aperçu validé le 2026-11-23 (D-37). Pour chaque vue : à gauche l'aperçu, à droite le vrai HUD, dessiné par son test de rendu avec les textes d'exemple (macro « Exemple »). L'aperçu est un dessin HTML large de 316 px ; le vrai HUD garde ses 290 px.</p>
+
+<section>
+<h2>En bref</h2>
+<p class="bilan"><strong>Mêmes dispositions, formes et couleurs.</strong> La ligne a la forme des autres ; la pastille d'étape est entre le texte d'état et la touche ; « En pause » a ses deux barres, « Terminée » son liseré bleu ; l'encadré ambre est un seul paragraphe ; les réglages ont leur curseur et leur ligne d'aide ; la capsule repliée montre l'état et la pastille.</p>
+<h3>Ce qui diffère, par les textes</h3>
+<ul class="liste">
+<li>Le HUD est moins large que le dessin de l'aperçu : à côté d'une pastille, le texte d'état se coupe (« Active · 12… »), comme l'aperçu le prévoit quand la place manque ; la ligne d'aide tient sur trois lignes au lieu de deux, l'encadré coupe ses lignes ailleurs.</li>
+<li>Le numéro de version des exemples (0.1.7) remplace « 0.1.N ».</li>
+</ul>
+<h3>À confirmer</h3>
+<ul class="liste">
+<li>La capsule repliée garde le point « ● » de la capsule d'aujourd'hui ; l'aperçu y montre « ■ », alors que sa propre ligne écrit « ● Active ».</li>
+<li>Si le texte d'état coupé gêne : la pastille pourrait monter sur la ligne du nom, à côté de « Exemple », pour laisser toute la place à « Active · 12/100 ». Ce serait une autre disposition, à valider d'abord.</li>
+</ul>
+<h3>Ce que l'aperçu ne montrait pas</h3>
+<ul class="liste">
+<li>La souris sur le HUD pendant la macro : « ❚❚ En pause · souris ici », comme « Multi-clic » ; la pastille reste.</li>
+<li>Une macro sans raccourci : rien à la place de la touche, « Aucun » dans les réglages, avant « Changer ».</li>
+<li>« ▶ » et « ■ » dans les textes d'une déclaration ou d'un script : la police du HUD ne les a pas ; le HUD dessine ses propres icônes à leur place.</li>
+</ul>
+</section>
+
+<section>
+<h2>Vue par vue</h2>
+
+<h3>1. Trois macros, réglages de la macro externe ouverts</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-1}}" width="{{../macro-externe/apercu-1.l}}" height="{{../macro-externe/apercu-1.h}}" alt="Aperçu : trois macros, réglages de la macro externe ouverts."></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-1-reglages}}" width="{{../rendu-egui/externe-1-reglages.l}}" height="{{../rendu-egui/externe-1-reglages.h}}" alt="Vrai HUD : « Exemple » arrêtée, « Limite de clics » à 100 clics, curseur de 10 à 500, raccourci F10, ligne d'aide."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+
+<h3>2. Active, pastille ambre</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-2}}" width="{{../macro-externe/apercu-2.l}}" height="{{../macro-externe/apercu-2.h}}" alt="Aperçu : « Exemple » active, pastille « Attente »."></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-2-active}}" width="{{../rendu-egui/externe-2-active.l}}" height="{{../rendu-egui/externe-2-active.h}}" alt="Vrai HUD : ligne verte « Active · 12… », pastille ambre « Attente », F10."></div><figcaption>Vrai HUD : le texte d'état se coupe avant la pastille.</figcaption></figure>
+</div>
+
+<h3>3. Les autres couleurs de pastille</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-3}}" width="{{../macro-externe/apercu-3.l}}" height="{{../macro-externe/apercu-3.h}}" alt="Aperçu : pastilles verte « Clic ! », grise « Pause 8 s », bleue « Relance »."></div><figcaption>Aperçu.</figcaption></figure>
+<div class="pile">
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-verte}}" width="{{../rendu-egui/externe-3-pastille-verte.l}}" height="{{../rendu-egui/externe-3-pastille-verte.h}}" alt="Vrai HUD : pastille verte « Clic ! »."></div></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-grise}}" width="{{../rendu-egui/externe-3-pastille-grise.l}}" height="{{../rendu-egui/externe-3-pastille-grise.h}}" alt="Vrai HUD : pastille grise « Pause 8 s »."></div></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-bleue}}" width="{{../rendu-egui/externe-3-pastille-bleue.l}}" height="{{../rendu-egui/externe-3-pastille-bleue.h}}" alt="Vrai HUD : pastille bleue « Relance »."></div><figcaption>Vrai HUD : une vue par couleur.</figcaption></figure>
+</div>
+</div>
+
+<h3>4. En pause, le script attend</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-4}}" width="{{../macro-externe/apercu-4.l}}" height="{{../macro-externe/apercu-4.h}}" alt="Aperçu : « En pause · attend sa fenêtre »."></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-4-en-attente}}" width="{{../rendu-egui/externe-4-en-attente.l}}" height="{{../rendu-egui/externe-4-en-attente.h}}" alt="Vrai HUD : deux barres, « En pause · attend sa f… »."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+
+<h3>5. Terminée</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-5}}" width="{{../macro-externe/apercu-5.l}}" height="{{../macro-externe/apercu-5.h}}" alt="Aperçu : « Terminée · 100/100 clics », liseré bleu."></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-5-terminee}}" width="{{../rendu-egui/externe-5-terminee.l}}" height="{{../rendu-egui/externe-5-terminee.h}}" alt="Vrai HUD : « Terminée · 100/100 clics », liseré bleu à gauche."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+
+<h3>6. Replié pendant la macro</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-6}}" width="{{../macro-externe/apercu-6.l}}" height="{{../macro-externe/apercu-6.h}}" alt="Aperçu : capsule « Active 12/100 », pastille « Attente », F10."></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-6-replie}}" width="{{../rendu-egui/externe-6-replie.l}}" height="{{../rendu-egui/externe-6-replie.h}}" alt="Vrai HUD : capsule verte « Active 12/100 », pastille ambre « Attente », F10."></div><figcaption>Vrai HUD : le point de la capsule d'aujourd'hui.</figcaption></figure>
+</div>
+
+<h3>7. Encadré ambre venu du script</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-7}}" width="{{../macro-externe/apercu-7.l}}" height="{{../macro-externe/apercu-7.h}}" alt="Aperçu : encadré « La fenêtre visée est en plein écran. »"></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-7-alerte}}" width="{{../rendu-egui/externe-7-alerte.l}}" height="{{../rendu-egui/externe-7-alerte.h}}" alt="Vrai HUD : encadré ambre sous la ligne, titre en gras puis le texte."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+
+<h3>8. La macro ne peut pas démarrer</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/apercu-8}}" width="{{../macro-externe/apercu-8.l}}" height="{{../macro-externe/apercu-8.h}}" alt="Aperçu : « Arrêtée » seul et l'encadré « « Exemple » ne peut pas démarrer. »"></div><figcaption>Aperçu.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-8-ne-demarre-pas}}" width="{{../rendu-egui/externe-8-ne-demarre-pas.l}}" height="{{../rendu-egui/externe-8-ne-demarre-pas.h}}" alt="Vrai HUD : « Arrêtée » seul et l'encadré ambre."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>Ce que l'aperçu ne montrait pas</h2>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-souris-sur-le-hud}}" width="{{../rendu-egui/externe-souris-sur-le-hud.l}}" height="{{../rendu-egui/externe-souris-sur-le-hud.h}}" alt="Vrai HUD : la souris sur le HUD, « En pause · souris ici » coupé avant la pastille."></div><figcaption>La souris sur le HUD pendant la macro.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-avant-premier-etat}}" width="{{../rendu-egui/externe-avant-premier-etat.l}}" height="{{../rendu-egui/externe-avant-premier-etat.h}}" alt="Vrai HUD : « Active » seul, avant le premier état du script."></div><figcaption>Active, avant le premier état du script.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-sans-raccourci}}" width="{{../rendu-egui/externe-sans-raccourci.l}}" height="{{../rendu-egui/externe-sans-raccourci.h}}" alt="Vrai HUD : une macro sans raccourci ni réglage, « Aucun » avant « Changer »."></div><figcaption>Sans raccourci ni réglage.</figcaption></figure>
+</div>
+</section>
+
+<p class="note">Images : à gauche, les vues de <code>maquettes/macro-externe/apercu.html</code> photographiées à 200 % (<code>node maquettes/outils/apercu-externe.mjs</code>) ; à droite, <code>maquettes/rendu-egui/externe-*@2x.png</code>, du test de rendu du HUD (<code>MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::</code>). Page refaite par <code>maquettes/multi-clic/rendu/</code> (voir <code>maquettes/LISEZMOI.md</code>).</p>
+
+</main>
+</body>
+</html>
