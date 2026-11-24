@@ -178,9 +178,38 @@ impl Hotkey {
     pub const F8: Hotkey = Hotkey { modifiers: Modifiers::NONE, key: vk::F8 };
     /// The default hotkey of « Multi-clic » (D-22).
     pub const F9: Hotkey = Hotkey { modifiers: Modifiers::NONE, key: vk::F9 };
+    /// No hotkey: an external macro whose declaration proposes none (until one is chosen in the HUD).
+    pub const NONE: Hotkey = Hotkey { modifiers: Modifiers::NONE, key: 0 };
+
+    /// Whether this is [`Hotkey::NONE`].
+    pub fn is_none(&self) -> bool {
+        self.key == 0
+    }
 
     pub const fn new(modifiers: Modifiers, key: Vk) -> Self {
         Hotkey { modifiers, key }
+    }
+
+    /// Reads a hotkey written as the HUD writes it (« F10 », « Ctrl+Alt+M », « Win+Maj+S »), as in
+    /// the declaration of an external macro; « Shift » and « Control » are read too, case does not
+    /// matter. A modifier alone is no hotkey: `None`, as for a name it does not know.
+    pub fn parse(text: &str) -> Option<Hotkey> {
+        let mut rest = text.trim();
+        let mut modifiers = Modifiers::NONE;
+        // Modifiers first, each followed by « + » (a key name may itself contain one: « Pavé num. + »).
+        while let Some((head, tail)) = rest.split_once('+') {
+            let modifier = match head.trim().to_lowercase().as_str() {
+                "ctrl" | "control" => Modifier::Ctrl,
+                "alt" => Modifier::Alt,
+                "maj" | "shift" => Modifier::Shift,
+                "win" => Modifier::Win,
+                _ => break,
+            };
+            modifiers.set(modifier, true);
+            rest = tail.trim();
+        }
+        let key = key_from_name(rest)?;
+        (modifier_of(key).is_none()).then_some(Hotkey::new(modifiers, key))
     }
 
     /// The text the user sees: « F8 », « Ctrl+Alt+M », « Win+Maj+S », « Arrêt défil. ».
@@ -287,6 +316,26 @@ pub fn key_name(key: Vk, layout_char: &dyn Fn(Vk) -> Option<char>) -> String {
             .map(|(_, name)| (*name).to_string())
             .unwrap_or_else(|| generic_name(key)),
     }
+}
+
+/// The key of a French name (« F10 », « M », « Pavé num. 5 », « Échap »), case ignored.
+fn key_from_name(name: &str) -> Option<Vk> {
+    let lower = name.trim().to_lowercase();
+    let mut chars = lower.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        return match c {
+            'a'..='z' => Some(vk::KEY_A + (c as Vk - 'a' as Vk)),
+            '0'..='9' => Some(vk::KEY_0 + (c as Vk - '0' as Vk)),
+            _ => None,
+        };
+    }
+    if let Some(n) = lower.strip_prefix('f').and_then(|n| n.parse::<Vk>().ok()) {
+        return (1..=24).contains(&n).then(|| vk::F1 + n - 1);
+    }
+    if let Some(d) = lower.strip_prefix("pavé num. ").and_then(|d| d.parse::<Vk>().ok()) {
+        return (d <= 9).then(|| vk::NUMPAD0 + d);
+    }
+    NAMED_KEYS.iter().find(|(_, n)| n.to_lowercase() == lower).map(|(key, _)| *key)
 }
 
 fn generic_name(key: Vk) -> String {
@@ -398,6 +447,37 @@ mod tests {
 
     fn ctrl() -> Modifiers {
         Modifiers::NONE.with(Modifier::Ctrl)
+    }
+
+    #[test]
+    fn hotkeys_are_read_as_the_hud_writes_them() {
+        let ctrl_alt = Modifiers::NONE.with(Modifier::Ctrl).with(Modifier::Alt);
+        for (text, expected) in [
+            ("F10", Some(Hotkey::new(Modifiers::NONE, vk::F10))),
+            (" f10 ", Some(Hotkey::new(Modifiers::NONE, vk::F10))),
+            ("Ctrl+Alt+M", Some(Hotkey::new(ctrl_alt, vk::KEY_M))),
+            ("control + alt + m", Some(Hotkey::new(ctrl_alt, vk::KEY_M))),
+            ("Shift+F3", Some(Hotkey::new(Modifiers::NONE.with(Modifier::Shift), vk::F3))),
+            ("Ctrl+Pavé num. +", Some(Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::ADD))),
+            ("Pavé num. 5", Some(Hotkey::new(Modifiers::NONE, vk::NUMPAD0 + 5))),
+            ("Échap", Some(Hotkey::new(Modifiers::NONE, vk::ESCAPE))),
+            ("", None),
+            ("Ctrl+", None),
+            ("Maj", None),
+            ("Ctrl+Alt", None),
+            ("F25", None),
+            ("Truc", None),
+        ] {
+            assert_eq!(Hotkey::parse(text), expected, "{text:?}");
+        }
+        // Every label the HUD writes reads back.
+        let no_layout = |_| None;
+        for key in [vk::F1, vk::F24, vk::KEY_A, vk::KEY_9, vk::NUMPAD0, vk::SPACE, vk::SCROLL, vk::DECIMAL] {
+            for modifiers in [Modifiers::NONE, ctrl_alt, Modifiers::NONE.with(Modifier::Win).with(Modifier::Shift)] {
+                let hotkey = Hotkey::new(modifiers, key);
+                assert_eq!(Hotkey::parse(&hotkey.label(&no_layout)), Some(hotkey), "{}", hotkey.label(&no_layout));
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,17 @@
+{
+  "nom": "Exemple",
+  "description": "Fait semblant de cliquer toutes les deux secondes",
+  "commande": "powershell.exe",
+  "arguments": [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", "C:\\Users\\<utilisateur>\\…\\MacroHUD\\tests\\macro-exemple\\exemple.ps1"
+  ],
+  "dossier": "C:\\Users\\<utilisateur>\\…\\MacroHUD\\tests\\macro-exemple",
+  "raccourci": "F10",
+  "boutons": ["droit"],
+  "reglages": [
+    { "cle": "limite", "nom": "Limite de clics", "unite": "clics", "min": 10, "max": 500, "pas": 10, "defaut": 100 }
+  ],
+  "etat_arretee": "limite {limite} clics",
+  "info": "Un vrai clic n'arrête pas cette macro : F10 ou le bouton du HUD l'arrêtent."
+}

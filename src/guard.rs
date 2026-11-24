@@ -16,6 +16,9 @@
 //!   click of the clicked button anywhere else stops the macro (D-19);
 //! - when « Maintenir le clic » starts while the user already holds the button, the user's release is
 //!   consumed too, so the macro takes the button over instead of losing it at once;
+//! - while the script of an external macro runs, an injected click on the HUD (by the script, or by
+//!   any other program) is consumed, press and release (D-22); the user's own clicks pass and stop
+//!   nothing (D-35);
 //! - a release is never swallowed when its press reached the system: no button can get stuck.
 
 use std::time::{Duration, Instant};
@@ -222,6 +225,8 @@ pub struct MouseGuard {
     held: ButtonSet,
     /// Buttons clicked again and again by « Multi-clic ».
     clicked: ButtonSet,
+    /// The script of an external macro runs: no injected click reaches the HUD.
+    shield: bool,
     /// Per button (left, right, middle): a swallowed press whose release is still to swallow, since when.
     pending_release: [Option<Instant>; 3],
 }
@@ -241,14 +246,25 @@ impl MouseGuard {
         self.clicked = clicked;
     }
 
+    /// While `on` (the script of an external macro runs), injected clicks on the HUD are consumed.
+    pub fn shield_hud(&mut self, on: bool) {
+        self.shield = on;
+    }
+
     /// The buttons macros use, held or clicked.
     pub fn used(&self) -> ButtonSet {
         self.held.union(self.clicked)
     }
 
-    /// Whether the hook is needed: a macro uses a button, or a swallowed click is not released yet.
+    /// Whether [`MouseGuard::on_event`] needs to know if a press is on the HUD.
+    pub fn needs_position(&self) -> bool {
+        self.shield || !self.used().is_empty()
+    }
+
+    /// Whether the hook is needed: a macro uses a button, a script runs, or a swallowed click is not
+    /// released yet.
     pub fn needs_hook(&self) -> bool {
-        !self.used().is_empty() || self.pending_release.iter().any(Option::is_some)
+        self.needs_position() || self.pending_release.iter().any(Option::is_some)
     }
 
     /// Handles a press or a release. `on_hud`: the pointer is over the HUD's window.
@@ -260,6 +276,11 @@ impl MouseGuard {
                 // A click on the HUD during a hold: every hold stops, and this click is consumed.
                 self.pending_release[i] = Some(now);
                 Verdict { swallow: true, stop: self.held, on_hud: true }
+            }
+            Edge::Down if on_hud && self.shield && !hand => {
+                // An injected click on the HUD while a script runs (D-22): it never reaches the HUD.
+                self.pending_release[i] = Some(now);
+                Verdict::SWALLOW
             }
             Edge::Down if hand && !on_hud && self.used().contains(button) => {
                 // The user clicks the button a macro uses: the macro stops, and this click is consumed.
@@ -385,6 +406,29 @@ mod tests {
         // Nor does a click on the HUD when nothing is held.
         let mut idle = MouseGuard::default();
         assert_eq!(idle.on_event(Left, Edge::Down, Source::Hand, true, now), Verdict::PASS);
+    }
+
+    #[test]
+    fn while_a_script_runs_injected_clicks_on_the_hud_are_dropped() {
+        let now = t0();
+        let mut g = MouseGuard::default();
+        g.shield_hud(true);
+        assert!(g.needs_hook() && g.needs_position());
+        // Injected on the HUD (by the script or by another program): consumed, press and release,
+        // even if the release comes elsewhere; nothing stops.
+        assert_eq!(g.on_event(Right, Edge::Down, Source::OtherProgram, true, now), Verdict::SWALLOW);
+        assert_eq!(g.on_event(Right, Edge::Up, Source::OtherProgram, false, now), Verdict::SWALLOW);
+        // Injected elsewhere: it goes through.
+        assert_eq!(g.on_event(Right, Edge::Down, Source::OtherProgram, false, now), Verdict::PASS);
+        assert_eq!(g.on_event(Right, Edge::Up, Source::OtherProgram, true, now), Verdict::PASS);
+        // The user's hand, on the HUD or elsewhere: it goes through and stops nothing (D-35).
+        for on_hud in [true, false] {
+            assert_eq!(g.on_event(Left, Edge::Down, Source::Hand, on_hud, now), Verdict::PASS);
+            assert_eq!(g.on_event(Left, Edge::Up, Source::Hand, on_hud, now), Verdict::PASS);
+        }
+        g.shield_hud(false);
+        assert!(!g.needs_hook());
+        assert_eq!(g.on_event(Right, Edge::Down, Source::OtherProgram, true, now), Verdict::PASS);
     }
 
     #[test]

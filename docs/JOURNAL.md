@@ -21,6 +21,110 @@ Gabarit :
 
 ---
 
+## 2026-11-23 · Macros externes : boutons relâchés aussi après une sortie en erreur (P4.4, suite)
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, après le commit de fin `61aa90c` ; un
+  nouveau commit de fin `[ETAPE-FINIE programmation-macros-externes]` le remplace : c'est lui (et
+  l'artefact de sa CI) qui compte.
+- **Objectif** : relu après le commit de fin, un cas où un bouton pouvait rester enfoncé.
+- **Réalisé** : un script à qui MacroHUD demande l'arrêt, ou qui dit `fin`, puis quitte avec un autre
+  code que 0 (il plante pendant son arrêt, par exemple) pouvait laisser enfoncé un bouton déclaré :
+  MacroHUD le croyait sur parole. Désormais ses boutons déclarés encore enfoncés sont relâchés, et
+  `macrohud.log` le dit (« … ; boutons déclarés relâchés : le bouton droit. ») ; seul le code 0
+  après `arret` ou après `fin` laisse les boutons tels quels.
+- **Décisions** : D-47 (remplace D-40).
+- **Vérifications** : `cargo fmt --check`, clippy Linux et Windows : OK ; `cargo test` : 182 tests OK
+  dans la session, dont le nouveau (arrêt demandé ou `fin`, suivis du code 0, 1, 2 ou d'aucun code).
+  CI de ce commit : voir le commit de fin.
+- **Non vérifié sur le PC** : inchangé (R35 à R44).
+- **Prochaine étape** : inchangée.
+
+## 2026-11-23 · Macros externes : le moteur, le script d'exemple et ses essais (P4.4)
+
+- **Session** : programmation
+- **Branche et commit** : `claude/gifted-hypatia-g84kg1`, partie de `main` `c44969e` : `b703d23`
+  (contrat, poussé seul), `74348b3` (moteur et couche Windows), `75ca443` (script d'exemple et ses
+  essais), puis le commit de fin `[ETAPE-FINIE programmation-macros-externes]`, dont la CI donne
+  l'exécutable à essayer (artefact `MacroHUD.0.1.<n>.exe`).
+- **Objectif** : P4.4, le moteur des macros externes selon `docs/MACROS-EXTERNES.md`, et le script
+  d'exemple dans `tests/macro-exemple/`, avec ses essais dans la CI.
+- **Réalisé** :
+  1. **Contrat d'abord** (`b703d23`, « P4.4 contrat : ») : des ajouts seuls, rien de ce que le HUD
+     dessine déjà ne change. Pour la session « visuel » (P4.5) : `HudState::external_macros` (une
+     `ExternalMacroView` par macro externe, après les macros de MacroHUD, dans l'ordre des ids) ;
+     `ExternalLine` (Arrêtée, Active, En pause, Terminée, chacune avec son texte) ; `Badge` et
+     `BadgeColor` ; `Alert` ; `IntSetting` (curseur : bornes, pas, valeur ; `snap` et `label`) ;
+     `info` ; `HudAction::SetSetting(id, clé, valeur)`, que le moteur reçoit déjà. `Start`, `Stop` et
+     `StartCapture` marchent tels quels avec l'id d'une macro externe. Les exemples de
+     `contract::samples()` sont les vues de `maquettes/macro-externe/apercu.html`.
+  2. **Déclarations** : lues au démarrage dans `%APPDATA%\MacroHUD\macros-externes\`, une ligne
+     par fichier valide, dans l'ordre des ids ; un fichier refusé va au journal avec la raison, les
+     autres macros marchent. Touche et réglages gardés dans `reglages.json` (D-46).
+  3. **Moteur** (`src/engine/scripts.rs`) : le script ne tourne que pendant la macro ; il reçoit ses
+     réglages au lancement, puis à chaque changement ; `pause` et `reprise` quand la souris entre
+     dans le HUD et en sort (aussi pendant un appui commencé sur le HUD) ; ce qu'il dit fait sa ligne
+     (`etat`, `pastille`, `attente`, `reprise`, `alerte`, `fin`, `journal`, le reste au journal) ;
+     arrêt : `arret`, 2 s au plus, puis arrêt forcé et boutons déclarés relâchés (D-40) ; sortie sans
+     `fin` : boutons relâchés et encadré « s'est arrêtée seule » avec le code de sortie, sauf après
+     une `alerte`, qui garde son encadré seul, quel que soit le code ; script ou dossier introuvable,
+     commande qui ne démarre pas : « ne peut pas démarrer » et la raison (D-45). Un vrai clic n'arrête
+     pas une macro externe (D-35). Une macro à la fois, même pendant l'arrêt d'un script (D-43) ;
+     lancée par le HUD, elle part tout de suite, en pause si la souris est sur le HUD (D-41).
+  4. **Processus** (`src/script.rs`) : commande lancée sans fenêtre de console (`CREATE_NO_WINDOW`),
+     dans `dossier`, entrée et sortie en tubes ; sortie lue sur un fil à part, ligne par ligne (4 Ko
+     lus au plus par ligne, UTF-8 invalide remplacé, 200 caractères gardés) ; sortie d'erreur au
+     journal ; l'entrée est écrite par un fil à part : le moteur n'attend jamais un script.
+  5. **Couche Windows** : chaque script dans un Job Object que Windows ferme avec MacroHUD, quelle
+     que soit sa fin ; à la fin d'un lancement, ce que le script a laissé tourner s'arrête aussi
+     (D-44). Le gestionnaire de plantage arrête le Job, puis relâche les boutons déclarés encore
+     enfoncés ; `--essai-plantage` plante aussi à l'arrêt d'une macro externe qui déclare des
+     boutons. Pendant qu'un script tourne, le crochet de la souris écarte tout clic injecté qui tombe
+     sur le HUD, quel que soit son auteur (D-42).
+  6. **Script d'exemple** (`tests/macro-exemple/`, voir son `LISEZMOI.md`) : `exemple.ps1`, générique,
+     pour Windows PowerShell 5.1 et PowerShell 7 (en UTF-8 avec BOM, sans quoi 5.1 lit mal ses
+     accents) ; il fait semblant de cliquer et ne touche à la souris que sur demande (`-Clicks`, pour
+     le PC) ; modes `normal`, `wait`, `error`, `alert`, `deaf`. `exemple.json` : la déclaration à
+     copier sur le PC, chemins à adapter (`C:\Users\<utilisateur>\…`). `essais.rs`, compilé dans
+     `cargo test` : le vrai moteur lance le script et vérifie le lancement, les réglages, la pastille,
+     `attente`, `fin`, l'arrêt demandé, l'arrêt forcé après 2 s, la sortie en erreur, la fermeture de
+     l'entrée, une alerte suivie d'une sortie (codes 1 et 0), la fermeture de MacroHUD, un script ou
+     une commande introuvables. Sans PowerShell, ils sont sautés, sauf dans la CI.
+  - Rien dans `src/hud/` ni dans `maquettes/`. Seule macro externe du dépôt : l'« Exemple ».
+- **Décisions** : D-40 à D-46 (développeur).
+- **Vérifications** : `cargo fmt --check` : OK. `cargo clippy --all-targets -- -D warnings` sous
+  Linux et pour la cible `x86_64-pc-windows-msvc` : OK. `cargo test` dans la session : 181 tests OK
+  (les cas PowerShell sautés : pas de PowerShell dans le conteneur, et son installation y a été
+  refusée).
+  - CI n° 37 (`74348b3`, le moteur) : vert. Sous Windows, un script de test (`cmd`, qui lance `ping`)
+    s'arrête dans son Job Object avec ce qu'il a lancé, par le moteur comme par le gestionnaire de
+    plantage.
+  - CI n° 39 (`75ca443`, l'exemple) : vert. Linux : 181 tests, dont les cas de l'exemple avec
+    PowerShell 7. Windows : 188 tests, dont chaque cas de l'exemple avec Windows PowerShell 5.1 puis
+    PowerShell 7 ; aucun `powershell.exe` laissé derrière (nettoyage du poste de la CI) ;
+    compilation release ; `MacroHUD.0.1.39.exe --version` répond « MacroHUD 0.1.39 ».
+- **Non vérifié sur le PC** : R35 à R44 (plan) : aucune fenêtre de console ; plus aucun
+  `powershell.exe` après un arrêt, un plantage (`--essai-plantage`) ou une fin de tâche de
+  MacroHUD ; arrêt forcé d'un script qui tient le bouton droit dans une vraie fenêtre ; clics
+  injectés écartés du HUD (`-Stubborn`) ; une macro à la fois avec un script ; « Quitter » et Alt+F4
+  pendant un script ; avec la ligne du HUD (P4.5) : pastille, « En pause », « Terminée », encadrés,
+  réglages gardés.
+- **Problèmes et dette** :
+  - Le HUD actuel ne montre pas encore les macros externes (P4.5, session « visuel ») : en attendant,
+    l'Exemple se lance par F10 et se suit dans `macrohud.log`. Rien ne manque au contrat pour P4.5 ;
+    à savoir : les messages du moteur peuvent concerner une macro externe (« Nouveau raccourci de
+    « Exemple » : F11. », « Raccourci refusé », « … est indisponible »), par son id.
+  - Hors de Windows (`cargo run` sous Linux), pas de Job Object : un script arrêté de force l'est
+    seul, sans ce qu'il a lancé, et les boutons des scripts ne sont pas suivis.
+  - Un programme que le script lancerait dans le tout premier instant, avant d'être mis dans son Job
+    Object, y échapperait (la bibliothèque standard de Rust ne lance pas de processus suspendu) ; un
+    interpréteur met bien plus longtemps à démarrer.
+  - La boîte de plantage dit « maintenu par MacroHUD » aussi pour un bouton relâché pour un script
+    (texte laissé tel quel).
+  - Mes réponses à la session maître sont refusées (erreur 401) : tout est dans les commits et ici.
+- **Prochaine étape** : réunion par la session maître ; P4.5 (« visuel ») ; puis le test sur le PC
+  (P4.6), R35 à R44 compris.
+
 ## 2026-11-23 · Macros externes : plan publié, construction lancée
 
 - **Session** : maître

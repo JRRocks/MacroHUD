@@ -6,25 +6,37 @@
 //! thread (see `platform`), which owns the global hotkeys and injects the mouse buttons, and wakes
 //! it at [`Engine::next_deadline`].
 //!
-//! Two kinds of macros: « Maintenir le clic » keeps a button down; « Multi-clic » clicks it again and
-//! again, on a fixed beat (press at `t0`, `t0 + 1/rate`, `t0 + 2/rate`...: a late wake-up never
+//! MacroHUD's own macros: « Maintenir le clic » keeps a button down; « Multi-clic » clicks it again
+//! and again, on a fixed beat (press at `t0`, `t0 + 1/rate`, `t0 + 2/rate`...: a late wake-up never
 //! shifts the next clicks, and after a long one the beat starts again instead of sending the missed
-//! clicks in a burst).
+//! clicks in a burst). Then the external macros (D-32, `docs/MACROS-EXTERNES.md`): scripts of the PC
+//! it starts, talks to and stops (`engine/scripts.rs`).
 //!
 //! Rules it keeps, whatever happens:
 //! - no button is pressed unless the physical-click guard already watches it;
 //! - the button released is always the one actually pressed, even if the options changed since;
 //! - stopping, changing the options, quitting: whatever is held is released first;
-//! - one macro at a time (D-20): starting one stops the other first;
-//! - no automatic click lands on the HUD (D-22): « Multi-clic » waits while the mouse is on it.
+//! - a script stopped by force, or that quits without `fin` or with an exit code other than 0: its
+//!   declared buttons still down are released;
+//! - one macro at a time (D-20): starting one stops the other first (and waits for a script to end);
+//! - no automatic click lands on the HUD (D-22): « Multi-clic » waits while the mouse is on it, a
+//!   script is told to pause, and the guard drops the injected clicks on the HUD while it runs.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::capture::Outcome;
-use crate::contract::{ClickRate, MacroId, MacroOptions, MacroStatus, Message, MessageLevel, MouseButton};
+use crate::contract::{
+    Alert, Badge, ClickRate, ExternalLine, MacroId, MacroOptions, MacroStatus, Message, MessageLevel, MouseButton,
+};
+use crate::external::{Declaration, lasting};
 use crate::guard::ButtonSet;
 use crate::hotkey::{self, Hotkey, Vk};
 use crate::macros::MacroDef;
+
+mod scripts;
+use scripts::External;
+pub use scripts::SCRIPT_STOP_WAIT;
 
 /// Delay between « Activer » in the HUD and the macro's first action: the time to move the mouse
 /// away from the HUD, to where the button must act (at once, it would land on the HUD itself).
@@ -84,14 +96,52 @@ pub trait Backend {
     fn altgr_char(&self, hotkey: Hotkey) -> Option<char>;
     /// The character printed on a layout-dependent key (punctuation), with the current layout.
     fn layout_char(&self, key: Vk) -> Option<char>;
+    /// While `on` (an external macro runs), the guard drops the injected clicks under which lies the
+    /// HUD, whoever made them (D-22); real clicks pass and stop nothing (D-35).
+    fn guard_hud(&mut self, on: bool) -> Result<(), String>;
+    /// Starts the script of an external macro, its input and output in pipes; its output comes back
+    /// as [`Event::Script`] with the run number returned. `Err`: why it cannot start (French).
+    fn launch(&mut self, launch: &Launch) -> Result<u64, String>;
+    /// Writes one line to the input of the script of `run`.
+    fn tell(&mut self, run: u64, line: &str) -> Result<(), String>;
+    /// Whether the script of `run` has ended: `Some` with its exit code (`Some(None)`: none known).
+    fn script_ended(&mut self, run: u64) -> Option<Option<i32>>;
+    /// Ends the script of `run` by force, with every process it started.
+    fn kill(&mut self, run: u64);
+    /// The run is over (its end handled): what the script left running ends too (on Windows, the
+    /// processes of its Job Object), and the crash handler forgets it.
+    fn script_done(&mut self, run: u64);
+    /// Releases those of `buttons` that are down (after a script ended badly); returns them.
+    fn release_down(&mut self, buttons: ButtonSet) -> ButtonSet;
+}
+
+/// What the platform needs to start the script of an external macro.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launch {
+    /// The macro's name, for the run log.
+    pub name: String,
+    pub command: String,
+    pub arguments: Vec<String>,
+    pub folder: Option<PathBuf>,
+    /// Its declared buttons: released if MacroHUD crashes while the script runs.
+    pub buttons: ButtonSet,
+}
+
+/// A line of a script's output, or its end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScriptOutput {
+    Line(String),
+    Closed,
 }
 
 /// What the HUD asks, through the app.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Start(MacroId),
     Stop(MacroId),
     SetOptions(MacroId, MacroOptions),
+    /// A setting of an external macro: its key, its new value.
+    SetSetting(MacroId, String, i64),
     StartCapture(MacroId),
     CancelCapture,
 }
@@ -110,7 +160,7 @@ pub enum KeySource {
 
 /// What the system reports (on Windows: hotkeys and hooks).
 #[cfg_attr(not(windows), allow(dead_code))]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// A registered hotkey was pressed.
     Hotkey(HotkeyId),
@@ -120,6 +170,9 @@ pub enum Event {
     Click { buttons: ButtonSet, on_hud: bool },
     /// The capture of a new hotkey ended.
     Captured { outcome: Outcome, source: KeySource },
+    /// A line or the end of the output of the script of an external macro (`run`: see
+    /// [`Backend::launch`]).
+    Script { run: u64, output: ScriptOutput },
 }
 
 /// One macro as the engine publishes it.
@@ -144,10 +197,28 @@ pub struct Notice {
     pub message: Option<Message>,
 }
 
+/// One external macro as the engine publishes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalSnapshot {
+    pub id: MacroId,
+    pub status: MacroStatus,
+    /// Its hotkey, if it has one.
+    pub hotkey: Option<Hotkey>,
+    /// Its text (empty: none).
+    pub hotkey_label: String,
+    /// The values of its settings, in declaration order.
+    pub values: Vec<i64>,
+    pub line: ExternalLine,
+    pub badge: Option<Badge>,
+    pub suspended: bool,
+    pub alert: Option<Alert>,
+}
+
 /// What the engine publishes after every change.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub macros: Vec<MacroSnapshot>,
+    pub externals: Vec<ExternalSnapshot>,
     pub capturing: Option<MacroId>,
     pub notice: Option<Notice>,
 }
@@ -158,6 +229,14 @@ pub struct MacroSetup {
     pub def: MacroDef,
     pub hotkey: Hotkey,
     pub options: MacroOptions,
+}
+
+/// What an external macro starts with: its declaration and its saved settings.
+#[derive(Clone, Debug)]
+pub struct ExternalSetup {
+    pub declaration: Declaration,
+    pub hotkey: Option<Hotkey>,
+    pub values: Vec<i64>,
 }
 
 /// Who asked to start a macro.
@@ -226,12 +305,17 @@ struct Clicking {
 #[derive(Debug)]
 struct Slot {
     def: MacroDef,
+    /// [`Hotkey::NONE`]: none (an external macro whose declaration proposes none).
     hotkey: Hotkey,
     registered: Option<HotkeyId>,
     /// Why the macro cannot run (its hotkey could not be registered at start).
     unavailable: Option<String>,
+    /// MacroHUD's own macros only (an external macro's stay at their default, unused).
     options: MacroOptions,
+    /// MacroHUD's own macros only (an external macro stays `Stopped` here: see `external`).
     run: Run,
+    /// An external macro: its declaration and its script.
+    external: Option<Box<External>>,
 }
 
 #[derive(Debug)]
@@ -246,6 +330,13 @@ pub struct Engine<B: Backend> {
     slots: Vec<Slot>,
     capture: Option<Capture>,
     notice: Option<Notice>,
+    /// A macro asked to start while the script of an external macro was still ending: it starts
+    /// once that script has ended (one at a time, D-20).
+    pending: Option<(usize, Trigger)>,
+    /// [`Engine::shutdown`] began: nothing starts any more.
+    shutting_down: bool,
+    /// [`Engine::shutdown`] ended: hotkeys unregistered.
+    shut: bool,
 }
 
 /// The countdown shown between « Activer » and the macro's first action.
@@ -287,8 +378,8 @@ fn seconds_text(duration: Duration) -> String {
 }
 
 impl<B: Backend> Engine<B> {
-    pub fn new(backend: B, setup: &[MacroSetup]) -> Self {
-        let slots = setup
+    pub fn new(backend: B, setup: &[MacroSetup], externals: Vec<ExternalSetup>) -> Self {
+        let mut slots: Vec<Slot> = setup
             .iter()
             .map(|s| Slot {
                 def: s.def,
@@ -297,9 +388,29 @@ impl<B: Backend> Engine<B> {
                 unavailable: None,
                 options: s.options,
                 run: Run::Stopped,
+                external: None,
             })
             .collect();
-        Engine { backend, slots, capture: None, notice: None }
+        for x in externals {
+            let def = MacroDef {
+                id: MacroId(lasting(&x.declaration.id)),
+                name: lasting(&x.declaration.name),
+                description: lasting(&x.declaration.description),
+                available: true,
+                default_hotkey: x.declaration.hotkey.unwrap_or(Hotkey::NONE),
+                default_options: MacroOptions::HoldClick { button: MouseButton::Left },
+            };
+            slots.push(Slot {
+                def,
+                hotkey: x.hotkey.unwrap_or(Hotkey::NONE),
+                registered: None,
+                unavailable: None,
+                options: def.default_options,
+                run: Run::Stopped,
+                external: Some(Box::new(External::new(x.declaration, x.values))),
+            });
+        }
+        Engine { backend, slots, capture: None, notice: None, pending: None, shutting_down: false, shut: false }
     }
 
     #[cfg(test)]
@@ -316,7 +427,7 @@ impl<B: Backend> Engine<B> {
     /// the reason; choosing another hotkey makes it available again.
     pub fn start(&mut self) {
         for i in 0..self.slots.len() {
-            if !self.slots[i].def.available {
+            if !self.slots[i].def.available || self.slots[i].hotkey.is_none() {
                 continue;
             }
             let hotkey = self.slots[i].hotkey;
@@ -349,6 +460,9 @@ impl<B: Backend> Engine<B> {
 
     /// Handles a request of the HUD.
     pub fn command(&mut self, command: Command, now: Instant) {
+        if self.shutting_down {
+            return;
+        }
         match command {
             Command::Start(id) => {
                 if let Some(i) = self.find(id) {
@@ -363,6 +477,11 @@ impl<B: Backend> Engine<B> {
             Command::SetOptions(id, options) => {
                 if let Some(i) = self.find(id) {
                     self.set_options(i, options, now);
+                }
+            }
+            Command::SetSetting(id, key, value) => {
+                if let Some(i) = self.find(id).filter(|&i| self.slots[i].external.is_some()) {
+                    self.set_setting(i, &key, value);
                 }
             }
             Command::StartCapture(id) => {
@@ -382,6 +501,9 @@ impl<B: Backend> Engine<B> {
 
     /// Handles a report of the system.
     pub fn event(&mut self, event: Event, now: Instant) {
+        if self.shutting_down && !matches!(event, Event::Script { .. }) {
+            return;
+        }
         match event {
             Event::Hotkey(id) => {
                 let Some(i) = self.slots.iter().position(|s| s.registered == Some(id)) else { return };
@@ -392,11 +514,14 @@ impl<B: Backend> Engine<B> {
                     self.captured(Outcome::Chosen(hotkey), KeySource::Hotkey);
                     return;
                 }
-                match self.slots[i].run {
-                    Run::Stopped => self.start_macro(i, Trigger::Hotkey, now),
-                    Run::Arming { .. } | Run::Holding { .. } | Run::Clicking(_) => {
-                        self.stop_macro(i, Cause::Hotkey, now)
-                    }
+                let running = match self.slots[i].external.as_deref() {
+                    Some(x) => x.running(),
+                    None => self.slots[i].run != Run::Stopped,
+                };
+                if running {
+                    self.stop_macro(i, Cause::Hotkey, now);
+                } else {
+                    self.start_macro(i, Trigger::Hotkey, now);
                 }
             }
             Event::Click { buttons, on_hud } => {
@@ -433,6 +558,7 @@ impl<B: Backend> Engine<B> {
                 }
             }
             Event::Captured { outcome, source } => self.captured(outcome, source),
+            Event::Script { run, output } => self.on_script(run, output, now),
         }
     }
 
@@ -440,6 +566,10 @@ impl<B: Backend> Engine<B> {
     /// captures that lasted too long.
     pub fn tick(&mut self, now: Instant) {
         for i in 0..self.slots.len() {
+            if self.slots[i].external.is_some() {
+                self.external_tick(i, now);
+                continue;
+            }
             match self.slots[i].run {
                 Run::Arming { at, shown } => self.arming_tick(i, at, shown, now),
                 Run::Clicking(_) => self.step_clicks(i, now),
@@ -469,30 +599,65 @@ impl<B: Backend> Engine<B> {
             Run::Clicking(c) => Some(c.release_at.unwrap_or(c.next_press)),
             Run::Stopped | Run::Holding { .. } => None,
         });
-        runs.chain(self.capture.as_ref().map(|c| c.deadline)).min()
+        let scripts = self.slots.iter().filter_map(|s| s.external.as_deref().and_then(External::deadline));
+        runs.chain(scripts).chain(self.capture.as_ref().map(|c| c.deadline)).min()
     }
 
-    /// Before quitting: releases everything held, stops listening, unregisters the hotkeys.
-    pub fn shutdown(&mut self, now: Instant) {
-        if self.capture.take().is_some() {
-            self.backend.stop_capture();
-        }
-        for i in 0..self.slots.len() {
-            self.stop_macro(i, Cause::Shutdown, now);
-        }
-        let _ = self.backend.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
-        for i in 0..self.slots.len() {
-            if let Some(id) = self.slots[i].registered.take() {
-                self.backend.unregister_hotkey(id);
+    /// Before quitting: releases everything held, asks the script of an external macro to stop,
+    /// stops listening, unregisters the hotkeys. A script may take up to [`SCRIPT_STOP_WAIT`]
+    /// to end (then it is stopped by force): call again at the time returned, with the script's
+    /// output events in between, until `None`.
+    pub fn shutdown(&mut self, now: Instant) -> Option<Instant> {
+        if !self.shutting_down {
+            self.shutting_down = true;
+            self.pending = None;
+            if self.capture.take().is_some() {
+                self.backend.stop_capture();
+            }
+            for i in 0..self.slots.len() {
+                self.stop_macro(i, Cause::Shutdown, now);
             }
         }
+        for i in 0..self.slots.len() {
+            if self.slots[i].external.is_some() {
+                self.external_tick(i, now);
+            }
+        }
+        let waiting = self.slots.iter().filter_map(|s| s.external.as_deref().and_then(External::deadline)).min();
+        if waiting.is_some() {
+            return waiting;
+        }
+        if !self.shut {
+            self.shut = true;
+            let _ = self.backend.watch(ButtonSet::EMPTY, ButtonSet::EMPTY);
+            for i in 0..self.slots.len() {
+                if let Some(id) = self.slots[i].registered.take() {
+                    self.backend.unregister_hotkey(id);
+                }
+            }
+        }
+        None
     }
 
-    /// The buttons macros hold or click right now: the guard watches them, and a crash test fires
-    /// when one of them stops (`--essai-plantage`).
+    /// The buttons macros hold or click right now: the guard watches them.
+    #[cfg(test)]
     pub fn guarded_buttons(&self) -> ButtonSet {
         let (held, clicked) = self.guard_sets();
         held.union(clicked)
+    }
+
+    /// The buttons in use right now: those macros hold or click, and those the script of an
+    /// external macro that runs declares. A crash test fires when a macro stops while one of them is
+    /// in use (`--essai-plantage`): it must be released, and the script ended.
+    pub fn crash_test_buttons(&self) -> ButtonSet {
+        let (held, clicked) = self.guard_sets();
+        let declared = self
+            .slots
+            .iter()
+            .filter_map(|s| s.external.as_deref())
+            .filter(|x| x.running())
+            .fold(ButtonSet::EMPTY, |set, x| set.union(x.declaration.buttons));
+        held.union(clicked).union(declared)
     }
 
     /// The buttons « Maintenir le clic » holds, and those « Multi-clic » clicks.
@@ -516,6 +681,7 @@ impl<B: Backend> Engine<B> {
             macros: self
                 .slots
                 .iter()
+                .filter(|s| s.external.is_none())
                 .map(|s| MacroSnapshot {
                     id: s.def.id,
                     status: match (&s.unavailable, s.run) {
@@ -530,6 +696,10 @@ impl<B: Backend> Engine<B> {
                     suspended: matches!(s.run, Run::Clicking(c) if c.suspended),
                 })
                 .collect(),
+            externals: (0..self.slots.len())
+                .filter(|&i| self.slots[i].external.is_some())
+                .map(|i| self.external_snapshot(i))
+                .collect(),
             capturing: self.capture.as_ref().map(|c| self.slots[c.index].def.id),
             notice: self.notice.clone(),
         }
@@ -542,7 +712,24 @@ impl<B: Backend> Engine<B> {
     }
 
     fn label(&self, hotkey: Hotkey) -> String {
+        if hotkey.is_none() {
+            return String::new();
+        }
         hotkey.label(&|key| self.backend.layout_char(key))
+    }
+
+    /// Why macro `i` stops, for the run log.
+    fn cause_text(&self, i: usize, cause: Cause) -> String {
+        match cause {
+            Cause::Hotkey => format!("par {}", self.label(self.slots[i].hotkey)),
+            Cause::Hud => "par le HUD".to_string(),
+            Cause::Hand => "par un vrai clic".to_string(),
+            Cause::HudClick => "par un clic sur le HUD".to_string(),
+            Cause::Other(j) => format!("pour « {} »", self.slots[j].def.name),
+            Cause::NewButton => "bouton changé".to_string(),
+            Cause::Shutdown => "à la fermeture".to_string(),
+            Cause::Failure => "refus de Windows".to_string(),
+        }
     }
 
     fn next_notice_number(&self) -> u64 {
@@ -582,22 +769,39 @@ impl<B: Backend> Engine<B> {
             self.say(i, MessageLevel::Warning, text);
             return;
         }
-        if slot.run != Run::Stopped {
+        let external = slot.external.is_some();
+        if self.runs(i) {
             return;
         }
-        if trigger == Trigger::Hotkey && self.backend.pointer_on_hud() {
-            // Refused as it is: whatever runs goes on.
+        if !external && trigger == Trigger::Hotkey && self.backend.pointer_on_hud() {
+            // Refused as it is: whatever runs goes on. (The script of an external macro is told
+            // to pause instead.)
             let label = self.label(self.slots[i].hotkey);
             self.say(i, MessageLevel::Warning, format!("Sors la souris du HUD avant d'appuyer sur {label}."));
             return;
         }
         // One macro at a time (D-20): the one that runs stops first, its button released.
         for j in 0..self.slots.len() {
-            if j != i && self.slots[j].run != Run::Stopped {
+            if j != i && self.runs(j) {
                 let (stopped, started) = (self.slots[j].def.name, self.slots[i].def.name);
                 crate::log::write(format!("« {stopped} » s'arrête : « {started} » démarre (une macro à la fois)."));
                 self.stop_macro(j, Cause::Other(i), now);
             }
+        }
+        // The script of an external macro may take a moment to end: this macro waits for it.
+        if let Some(j) = (0..self.slots.len()).find(|&j| j != i && self.runs(j)) {
+            let (ending, waiting) = (self.slots[j].def.name, self.slots[i].def.name);
+            crate::log::write(format!("« {waiting} » démarrera quand le script de « {ending} » aura fini."));
+            self.pending = Some((i, trigger));
+            return;
+        }
+        if external {
+            let by = match trigger {
+                Trigger::Hotkey => format!("par {}", self.label(self.slots[i].hotkey)),
+                Trigger::Hud => "par le HUD".to_string(),
+            };
+            self.start_external(i, &by, now);
+            return;
         }
         match trigger {
             Trigger::Hud => {
@@ -606,6 +810,14 @@ impl<B: Backend> Engine<B> {
                 self.say(i, MessageLevel::Info, countdown_text(self.slots[i].options, seconds));
             }
             Trigger::Hotkey => self.begin(i, trigger, now),
+        }
+    }
+
+    /// Whether macro `i` runs (for an external macro: its script runs, or is ending).
+    fn runs(&self, i: usize) -> bool {
+        match self.slots[i].external.as_deref() {
+            Some(x) => x.running(),
+            None => self.slots[i].run != Run::Stopped,
         }
     }
 
@@ -780,6 +992,10 @@ impl<B: Backend> Engine<B> {
     }
 
     fn stop_macro(&mut self, i: usize, cause: Cause, now: Instant) {
+        if self.slots[i].external.is_some() {
+            self.stop_external(i, cause, now);
+            return;
+        }
         match self.slots[i].run {
             Run::Stopped => {}
             Run::Arming { .. } => {
@@ -811,16 +1027,7 @@ impl<B: Backend> Engine<B> {
                 let released = c.release_at.map(|_| self.backend.release(c.button));
                 self.slots[i].run = Run::Stopped;
                 self.rewatch();
-                let why = match cause {
-                    Cause::Hotkey => format!("par {}", self.label(self.slots[i].hotkey)),
-                    Cause::Hud => "par le HUD".to_string(),
-                    Cause::Hand => "par un vrai clic".to_string(),
-                    Cause::HudClick => "par un clic sur le HUD".to_string(),
-                    Cause::Other(j) => format!("pour « {} »", self.slots[j].def.name),
-                    Cause::NewButton => "bouton changé".to_string(),
-                    Cause::Shutdown => "à la fermeture".to_string(),
-                    Cause::Failure => "refus de Windows".to_string(),
-                };
+                let why = self.cause_text(i, cause);
                 let delivered = match c.delivered {
                     0 => String::new(),
                     n => format!(" ; relâchements remis aussi à la fenêtre de l'appui : {n}"),
@@ -843,6 +1050,9 @@ impl<B: Backend> Engine<B> {
     }
 
     fn set_options(&mut self, i: usize, options: MacroOptions, now: Instant) {
+        if self.slots[i].external.is_some() {
+            return;
+        }
         let current = self.slots[i].options;
         // Options of another kind of macro are a mistake: nothing changes.
         if current == options || std::mem::discriminant(&current) != std::mem::discriminant(&options) {
@@ -980,7 +1190,7 @@ mod tests {
     use MouseButton::*;
 
     #[derive(Clone, Debug, PartialEq)]
-    enum Call {
+    pub(super) enum Call {
         Watch(ButtonSet),
         Press(MouseButton),
         Adopt(MouseButton),
@@ -991,26 +1201,41 @@ mod tests {
         Unregister(HotkeyId),
         StartCapture,
         StopCapture,
+        GuardHud(bool),
+        /// A script started: its command.
+        Launch(String),
+        /// A line written to the script.
+        Tell(String),
+        Kill,
+        Done,
+        /// Declared buttons released after a script ended badly (those that were down).
+        ReleaseDown(ButtonSet),
     }
 
     /// A pretend system: records what the engine does to it.
     #[derive(Default)]
-    struct Fake {
-        calls: Vec<Call>,
-        down: ButtonSet,
-        pointer_on_hud: bool,
-        taken_elsewhere: Vec<Hotkey>,
-        registered: Vec<(HotkeyId, Hotkey)>,
-        next_id: HotkeyId,
-        fail_watch: bool,
-        fail_press: bool,
-        fail_click_down: bool,
-        fail_click_up: bool,
+    pub(super) struct Fake {
+        pub(super) calls: Vec<Call>,
+        pub(super) down: ButtonSet,
+        pub(super) pointer_on_hud: bool,
+        pub(super) taken_elsewhere: Vec<Hotkey>,
+        pub(super) registered: Vec<(HotkeyId, Hotkey)>,
+        pub(super) next_id: HotkeyId,
+        pub(super) fail_watch: bool,
+        pub(super) fail_press: bool,
+        pub(super) fail_click_down: bool,
+        pub(super) fail_click_up: bool,
         /// What `click_up` answers: the release was also sent to the window of the press.
-        delivered: bool,
-        altgr: Option<(Hotkey, char)>,
+        pub(super) delivered: bool,
+        pub(super) altgr: Option<(Hotkey, char)>,
         /// What the guard was last told: buttons held, buttons clicked.
-        watching: (ButtonSet, ButtonSet),
+        pub(super) watching: (ButtonSet, ButtonSet),
+        /// The run number of the last script started.
+        pub(super) last_run: u64,
+        /// What `script_ended` answers.
+        pub(super) ended: Option<Option<i32>>,
+        /// `launch` refuses, with this reason.
+        pub(super) refuse_launch: Option<String>,
     }
 
     impl Backend for Fake {
@@ -1086,6 +1311,38 @@ mod tests {
         fn layout_char(&self, _key: Vk) -> Option<char> {
             None
         }
+        fn guard_hud(&mut self, on: bool) -> Result<(), String> {
+            self.calls.push(Call::GuardHud(on));
+            Ok(())
+        }
+        fn launch(&mut self, launch: &Launch) -> Result<u64, String> {
+            if let Some(why) = &self.refuse_launch {
+                return Err(why.clone());
+            }
+            self.calls.push(Call::Launch(launch.command.clone()));
+            self.last_run += 1;
+            Ok(self.last_run)
+        }
+        fn tell(&mut self, _run: u64, line: &str) -> Result<(), String> {
+            self.calls.push(Call::Tell(line.to_string()));
+            Ok(())
+        }
+        fn script_ended(&mut self, _run: u64) -> Option<Option<i32>> {
+            self.ended
+        }
+        fn kill(&mut self, _run: u64) {
+            self.calls.push(Call::Kill);
+            self.ended = Some(None);
+        }
+        fn script_done(&mut self, _run: u64) {
+            self.calls.push(Call::Done);
+        }
+        fn release_down(&mut self, buttons: ButtonSet) -> ButtonSet {
+            let down = ButtonSet::from_bits(self.down.bits() & buttons.bits());
+            self.calls.push(Call::ReleaseDown(down));
+            self.down = ButtonSet::from_bits(self.down.bits() & !buttons.bits());
+            down
+        }
     }
 
     const ID: MacroId = MacroId::HOLD_CLICK;
@@ -1095,7 +1352,7 @@ mod tests {
     }
 
     fn engine_with(fake: Fake) -> Engine<Fake> {
-        let mut engine = Engine::new(fake, &[setup(HOLD_CLICK)]);
+        let mut engine = Engine::new(fake, &[setup(HOLD_CLICK)], Vec::new());
         engine.start();
         engine.backend_mut().calls.clear();
         engine
@@ -1145,7 +1402,7 @@ mod tests {
 
     #[test]
     fn startup_registers_f8() {
-        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK)]);
+        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK)], Vec::new());
         e.start();
         assert_eq!(e.backend().calls, vec![Call::Register(Hotkey::F8)]);
         let s = e.snapshot();
@@ -1450,7 +1707,7 @@ mod tests {
         second.name = "Deuxième";
         second.default_hotkey = Hotkey::new(Modifiers::NONE, vk::F9);
         second.default_options = MacroOptions::HoldClick { button: Right };
-        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(second)]);
+        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(second)], Vec::new());
         e.start();
         calls(&mut e);
         let now = Instant::now();
@@ -1486,7 +1743,7 @@ mod tests {
         second.id = MacroId("deuxieme");
         second.name = "Deuxième";
         second.default_hotkey = Hotkey::new(Modifiers::NONE, vk::F9);
-        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(second)]);
+        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(second)], Vec::new());
         e.start();
         calls(&mut e);
         let now = Instant::now();
@@ -1609,7 +1866,11 @@ mod tests {
 
     #[test]
     fn a_hotkey_taken_at_startup_makes_the_macro_unavailable_until_another_is_chosen() {
-        let mut e = Engine::new(Fake { taken_elsewhere: vec![Hotkey::F8], ..Fake::default() }, &[setup(HOLD_CLICK)]);
+        let mut e = Engine::new(
+            Fake { taken_elsewhere: vec![Hotkey::F8], ..Fake::default() },
+            &[setup(HOLD_CLICK)],
+            Vec::new(),
+        );
         e.start();
         let reason = "F8 est déjà pris par Windows ou par un autre programme : choisis un autre raccourci.";
         assert_eq!(status(&e), MacroStatus::Unavailable(reason.into()));
@@ -1633,7 +1894,11 @@ mod tests {
 
     #[test]
     fn the_same_hotkey_can_be_chosen_again_once_it_is_free() {
-        let mut e = Engine::new(Fake { taken_elsewhere: vec![Hotkey::F8], ..Fake::default() }, &[setup(HOLD_CLICK)]);
+        let mut e = Engine::new(
+            Fake { taken_elsewhere: vec![Hotkey::F8], ..Fake::default() },
+            &[setup(HOLD_CLICK)],
+            Vec::new(),
+        );
         e.start();
         e.backend_mut().taken_elsewhere.clear();
         let now = Instant::now();
@@ -1672,7 +1937,7 @@ mod tests {
         later.id = MacroId("a-venir");
         later.available = false;
         later.default_hotkey = Hotkey::new(Modifiers::NONE, vk::F9);
-        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(later)]);
+        let mut e = Engine::new(Fake::default(), &[setup(HOLD_CLICK), setup(later)], Vec::new());
         e.start();
         assert_eq!(e.backend().calls, vec![Call::Register(Hotkey::F8)]);
         calls(&mut e);
@@ -1720,7 +1985,7 @@ mod tests {
     const MS: Duration = Duration::from_millis(1);
 
     fn engine_both_with(fake: Fake) -> Engine<Fake> {
-        let mut engine = Engine::new(fake, &[setup(HOLD_CLICK), setup(MULTI_CLICK)]);
+        let mut engine = Engine::new(fake, &[setup(HOLD_CLICK), setup(MULTI_CLICK)], Vec::new());
         engine.start();
         engine.backend_mut().calls.clear();
         engine

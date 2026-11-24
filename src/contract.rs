@@ -158,6 +158,119 @@ pub struct MacroView {
     pub suspended: bool,
 }
 
+/// Colour of the step badge of an external macro (`pastille <couleur> <texte>` of its script).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadgeColor {
+    /// `ambre`: the HUD's warning colour.
+    Amber,
+    /// `verte`: the green of an active macro.
+    Green,
+    /// `bleue`: the HUD's information colour.
+    Blue,
+    /// `grise`: secondary text.
+    Grey,
+}
+
+/// The step badge of an active external macro, between its state text and its hotkey: « Attente »,
+/// « Clic ! », « Pause 8 s ».
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Badge {
+    pub color: BadgeColor,
+    pub text: String,
+}
+
+/// The amber box under the line of an external macro, like « Raccourci refusé »: what its script
+/// said (`alerte <titre> | <texte>`), or MacroHUD's own word (« « Exemple » ne peut pas démarrer. »).
+/// It stays until the macro's next start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Alert {
+    pub title: String,
+    pub text: String,
+}
+
+/// An integer setting of an external macro, shown as a slider like the speed of « Multi-clic ».
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntSetting {
+    /// Its key, in the declaration and for the script (`reglage <cle> <valeur>`).
+    pub key: String,
+    /// « Limite de clics ».
+    pub name: String,
+    /// « clics », written after the value (« 100 clics »); may be empty.
+    pub unit: String,
+    pub min: i64,
+    pub max: i64,
+    /// The slider moves by this much (at least 1).
+    pub step: i64,
+    /// The current value: between `min` and `max`, on a step from `min`.
+    pub value: i64,
+}
+
+// (Used by the HUD, P4.5, and by the engine, in the next commits of P4.4.)
+#[cfg_attr(not(test), allow(dead_code))]
+impl IntSetting {
+    /// `value` brought between the bounds, onto the nearest step from `min` (what
+    /// [`HudAction::SetSetting`] keeps).
+    pub fn snap(&self, value: i64) -> i64 {
+        let step = self.step.max(1);
+        let top = self.min + (self.max - self.min).max(0) / step * step;
+        let steps = (value.clamp(self.min, top) - self.min + step / 2) / step;
+        (self.min + steps * step).min(top)
+    }
+
+    /// The value and its unit: « 100 clics », or « 100 » without a unit.
+    pub fn label(&self) -> String {
+        if self.unit.is_empty() { self.value.to_string() } else { format!("{} {}", self.value, self.unit) }
+    }
+}
+
+/// What the line of an external macro says, after its state word (`docs/MACROS-EXTERNES.md`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExternalLine {
+    /// « ■ Arrêtée · texte »: `etat_arretee` of its declaration, the settings' values written in;
+    /// `None`: « ■ Arrêtée » alone (no such text, or the macro could not start).
+    Stopped(Option<String>),
+    /// « ● Active · texte »: the last `etat` of its script; `None` before the first one.
+    Active(Option<String>),
+    /// « ❚❚ En pause · texte »: the script waits for a condition of its own (`attente`), until it
+    /// says `reprise`.
+    Waiting(String),
+    /// « ✓ Terminée · texte »: the script stopped by itself (`fin`); blue border, until the next
+    /// start.
+    Finished(String),
+}
+
+/// A macro external to MacroHUD (D-32, D-36): a script of the PC, declared outside the repository,
+/// that MacroHUD starts, stops and shows after its own macros. Its line has the same shape as the
+/// others (D-37).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalMacroView {
+    /// Its id: the name of its declaration file, without `.json`.
+    pub id: MacroId,
+    /// « Exemple ».
+    pub name: String,
+    /// One line, from its declaration (may be empty).
+    pub description: String,
+    /// Stopped; active (its script runs, or is being stopped); or unavailable, with the reason (its
+    /// hotkey was taken at start), as for the other macros.
+    pub status: MacroStatus,
+    /// Its hotkey as readable text, « F10 »; empty when it has none (« Changer » gives one).
+    pub hotkey: String,
+    /// The text after the state word. Active status: `Active` or `Waiting`; otherwise `Stopped` or
+    /// `Finished`.
+    pub line: ExternalLine,
+    /// The step badge (`pastille`), while active only.
+    pub badge: Option<Badge>,
+    /// Active, and the mouse on the HUD (or a press on the HUD not released yet): MacroHUD told the
+    /// script to pause (`pause`, D-22) until the mouse leaves. A click on the HUD acts there.
+    pub suspended: bool,
+    /// The amber box under the line.
+    pub alert: Option<Alert>,
+    /// Its integer settings, in the order of its declaration (slider, value, unit).
+    pub settings: Vec<IntSetting>,
+    /// The help line of its settings (`info`).
+    pub info: Option<String>,
+}
+
 /// Level of a one-off message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageLevel {
@@ -220,6 +333,8 @@ pub struct HudState {
     pub version: &'static str,
     /// The macros, in display order.
     pub macros: Vec<MacroView>,
+    /// The external macros (D-32), shown after `macros`, in the alphabetical order of their ids.
+    pub external_macros: Vec<ExternalMacroView>,
     /// The macro waiting for its new hotkey (the next key or combination), or none.
     pub capturing: Option<MacroId>,
     /// The current one-off message, if any (it disappears by itself after a few seconds).
@@ -239,10 +354,12 @@ impl HudState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum HudAction {
     /// Start a macro, after stopping the one that runs, if any (one at a time, D-20). Started from
-    /// the HUD, a macro acts after a short delay (the time to move the mouse away from the HUD); its
-    /// hotkey starts it at once.
+    /// the HUD, a macro of MacroHUD acts after a short delay (the time to move the mouse away from
+    /// the HUD); its hotkey starts it at once. An external macro starts at once: its script is told
+    /// to pause while the mouse is on the HUD.
     Start(MacroId),
-    /// Stop a macro (releases what it holds; « Multi-clic » sends no more clicks).
+    /// Stop a macro (releases what it holds; « Multi-clic » sends no more clicks; an external
+    /// macro's script is asked to stop, then stopped by force after 2 s).
     Stop(MacroId),
     /// Wait for the next key or combination, which becomes the macro's hotkey.
     StartCapture(MacroId),
@@ -251,6 +368,11 @@ pub enum HudAction {
     /// Change the options of a macro (the button; the speed of « Multi-clic »). A new button while
     /// the macro runs stops it; a new speed while « Multi-clic » runs counts from the next click.
     SetOptions(MacroId, MacroOptions),
+    /// Change an integer setting of an external macro: its `key`, the new value (brought within its
+    /// bounds and onto its step, see [`IntSetting::snap`]). The value goes to the script at once if
+    /// it runs (D-34), and is kept in the settings. (Asked by the HUD of P4.5.)
+    #[cfg_attr(not(test), allow(dead_code))]
+    SetSetting(MacroId, String, i64),
     /// Collapse (true) or expand (false) the HUD.
     SetCollapsed(bool),
     /// Move the window with the mouse: send it when a drag starts on the HUD (the pointer is still
@@ -283,10 +405,36 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
         available: true,
         suspended: false,
     };
+    // The external macro of the mock-up (`maquettes/macro-externe/apercu.html`), stopped.
+    let example = ExternalMacroView {
+        id: MacroId("exemple"),
+        name: "Exemple".into(),
+        description: "Clique toutes les deux secondes".into(),
+        status: MacroStatus::Stopped,
+        hotkey: "F10".into(),
+        line: ExternalLine::Stopped(Some("limite 100 clics".into())),
+        badge: None,
+        suspended: false,
+        alert: None,
+        settings: vec![IntSetting {
+            key: "limite".into(),
+            name: "Limite de clics".into(),
+            unit: "clics".into(),
+            min: 10,
+            max: 500,
+            step: 10,
+            value: 100,
+        }],
+        info: Some(
+            "Garde la fenêtre visée au premier plan. Un vrai clic n'arrête pas cette macro : F10 ou ▶ l'arrêtent."
+                .into(),
+        ),
+    };
     let base = HudState {
         app_name: "MacroHUD",
         version: "0.1.7",
         macros: vec![hold_click.clone()],
+        external_macros: Vec::new(),
         capturing: None,
         message: None,
         collapsed: false,
@@ -294,6 +442,14 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
     let with = |change: &dyn Fn(&mut HudState)| {
         let mut state = base.clone();
         change(&mut state);
+        state
+    };
+    let three = |change: &dyn Fn(&mut ExternalMacroView)| {
+        let mut state = base.clone();
+        state.macros.push(multi_click.clone());
+        let mut external = example.clone();
+        change(&mut external);
+        state.external_macros.push(external);
         state
     };
     vec![
@@ -427,13 +583,164 @@ pub fn samples() -> Vec<(&'static str, HudState)> {
                 s.macros[1].status = MacroStatus::Active;
             }),
         ),
+        // The views of the external macro's mock-up (D-37), with the three macros.
+        ("trois macros, macro externe arrêtée", three(&|_| {})),
+        (
+            "macro externe active, pastille ambre",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("12/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Amber, text: "Attente".into() });
+            }),
+        ),
+        (
+            "macro externe active, pastille verte",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("12/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Green, text: "Clic !".into() });
+            }),
+        ),
+        (
+            "macro externe active, pastille grise",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("13/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Grey, text: "Pause 8 s".into() });
+            }),
+        ),
+        (
+            "macro externe active, pastille bleue",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("13/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Blue, text: "Relance".into() });
+            }),
+        ),
+        (
+            "macro externe active, avant son premier état",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(None);
+            }),
+        ),
+        (
+            "macro externe en attente",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Waiting("attend sa fenêtre".into());
+            }),
+        ),
+        (
+            "macro externe suspendue (souris sur le HUD)",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("12/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Amber, text: "Attente".into() });
+                e.suspended = true;
+            }),
+        ),
+        ("macro externe terminée", three(&|e| e.line = ExternalLine::Finished("100/100 clics".into()))),
+        (
+            "replié, macro externe active",
+            three(&|e| {
+                e.status = MacroStatus::Active;
+                e.line = ExternalLine::Active(Some("12/100".into()));
+                e.badge = Some(Badge { color: BadgeColor::Amber, text: "Attente".into() });
+            })
+            .folded(),
+        ),
+        (
+            "macro externe, alerte de son script",
+            three(&|e| {
+                e.alert = Some(Alert {
+                    title: "La fenêtre visée est en plein écran.".into(),
+                    text: "Passe-la en fenêtre : en plein écran, la macro ne voit pas l'écran.".into(),
+                })
+            }),
+        ),
+        (
+            "macro externe qui ne peut pas démarrer",
+            three(&|e| {
+                e.line = ExternalLine::Stopped(None);
+                e.alert = Some(Alert {
+                    title: "« Exemple » ne peut pas démarrer.".into(),
+                    text: "Son script est introuvable sur ce PC. Les autres macros marchent.".into(),
+                });
+            }),
+        ),
+        (
+            "macro externe sans raccourci ni réglage",
+            three(&|e| {
+                e.hotkey = String::new();
+                e.settings.clear();
+                e.info = None;
+                e.line = ExternalLine::Stopped(None);
+            }),
+        ),
     ]
+}
+
+impl HudState {
+    /// The same state, collapsed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn folded(mut self) -> Self {
+        self.collapsed = true;
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn integer_settings_stay_on_their_steps_between_their_bounds() {
+        let limit = IntSetting {
+            key: "limite".into(),
+            name: "Limite de clics".into(),
+            unit: "clics".into(),
+            min: 10,
+            max: 500,
+            step: 10,
+            value: 100,
+        };
+        assert_eq!(limit.label(), "100 clics");
+        assert_eq!(IntSetting { unit: String::new(), ..limit.clone() }.label(), "100");
+        for (asked, kept) in [(100, 100), (104, 100), (105, 110), (0, 10), (-50, 10), (499, 500), (9999, 500)] {
+            assert_eq!(limit.snap(asked), kept, "{asked}");
+        }
+        // A top that is not on a step: the last step below it.
+        let odd = IntSetting { min: 0, max: 25, step: 10, ..limit.clone() };
+        assert_eq!((odd.snap(25), odd.snap(24), odd.snap(14)), (20, 20, 10));
+        // A step of 0 or less counts as 1.
+        let loose = IntSetting { min: 1, max: 3, step: 0, ..limit };
+        assert_eq!((loose.snap(2), loose.snap(7)), (2, 3));
+    }
+
+    #[test]
+    fn the_external_macro_samples_follow_the_mock_up() {
+        let samples = samples();
+        let find = |name: &str| samples.iter().find(|(n, _)| *n == name).map(|(_, s)| s).expect(name);
+        let stopped = find("trois macros, macro externe arrêtée");
+        assert_eq!(stopped.macros.len() + stopped.external_macros.len(), 3);
+        let example = &stopped.external_macros[0];
+        assert_eq!(example.line, ExternalLine::Stopped(Some("limite 100 clics".into())));
+        assert_eq!(example.settings[0].label(), "100 clics");
+        // What the slider asks for: a value on its steps.
+        let asked = HudAction::SetSetting(example.id, example.settings[0].key.clone(), example.settings[0].snap(123));
+        assert_eq!(asked, HudAction::SetSetting(MacroId("exemple"), "limite".into(), 120));
+        assert!(find("replié, macro externe active").collapsed);
+        for (name, state) in &samples {
+            for e in &state.external_macros {
+                let active = e.status == MacroStatus::Active;
+                let active_line = matches!(e.line, ExternalLine::Active(_) | ExternalLine::Waiting(_));
+                assert_eq!(active, active_line, "{name}: state and line agree");
+                assert!(active || e.badge.is_none() && !e.suspended, "{name}: badge and pause while active only");
+            }
+        }
+    }
 
     #[test]
     fn click_rates_stay_between_their_bounds() {

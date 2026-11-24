@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 use crate::contract::{ClickRate, MacroId, MacroOptions, MouseButton};
+use crate::external::Declaration;
 use crate::hotkey::{self, Hotkey, Modifiers, Vk};
 use crate::macros::MacroDef;
 
@@ -26,7 +27,9 @@ pub struct Settings {
     pub collapsed: bool,
     /// One entry per macro of the catalog, in catalog order.
     pub macros: Vec<MacroSettings>,
-    /// Entries of macros this version does not know (written by a newer one): kept untouched.
+    /// Entries of the macros that are not MacroHUD's own, kept as they are: those of the external
+    /// macros (read and written by [`external_saved`] and [`set_external`]), and those of macros this
+    /// version does not know (written by a newer one, or of a declaration since removed).
     pub unknown_macros: Map<String, Value>,
 }
 
@@ -223,19 +226,8 @@ fn button_from_key(key: &str) -> Option<MouseButton> {
 pub fn to_json(settings: &Settings, label: &dyn Fn(&Hotkey) -> String) -> String {
     let mut macros = settings.unknown_macros.clone();
     for m in &settings.macros {
-        let h = m.hotkey;
         let mut entry = Map::new();
-        entry.insert(
-            "hotkey".into(),
-            json!({
-                "key": h.key,
-                "ctrl": h.modifiers.ctrl,
-                "alt": h.modifiers.alt,
-                "shift": h.modifiers.shift,
-                "win": h.modifiers.win,
-                "label": label(&h),
-            }),
-        );
+        entry.insert("hotkey".into(), hotkey_json(&m.hotkey, label));
         match m.options {
             MacroOptions::HoldClick { button } => {
                 entry.insert("button".into(), json!(button_key(button)));
@@ -259,6 +251,58 @@ pub fn to_json(settings: &Settings, label: &dyn Fn(&Hotkey) -> String) -> String
     let mut text = serde_json::to_string_pretty(&root).unwrap_or_default();
     text.push('\n');
     text
+}
+
+/// What the settings keep of an external macro (D-34), in its entry: its hotkey when the user chose
+/// another one than its declaration's (`None` inside: none), and the values of its settings, each
+/// brought within its bounds; the declaration gives whatever is missing or wrong.
+pub fn external_saved(settings: &Settings, declaration: &Declaration) -> (Option<Hotkey>, Vec<i64>) {
+    let entry = settings.unknown_macros.get(&declaration.id).and_then(Value::as_object);
+    let hotkey = match entry.and_then(|e| e.get("hotkey")) {
+        None => declaration.hotkey,
+        Some(Value::Null) => None,
+        Some(value) => parse_hotkey(value).or(declaration.hotkey),
+    };
+    let saved = entry.and_then(|e| e.get("reglages")).and_then(Value::as_object);
+    let values = declaration
+        .settings
+        .iter()
+        .map(|setting| match saved.and_then(|s| s.get(&setting.key)).and_then(Value::as_i64) {
+            Some(value) => setting.at(value).value,
+            None => setting.default,
+        })
+        .collect();
+    (hotkey, values)
+}
+
+/// Keeps the hotkey and the values of the settings of an external macro in its entry (see
+/// [`external_saved`]). `label` names a hotkey.
+pub fn set_external(
+    settings: &mut Settings,
+    declaration: &Declaration,
+    hotkey: Option<Hotkey>,
+    values: &[i64],
+    label: &dyn Fn(&Hotkey) -> String,
+) {
+    let mut entry = Map::new();
+    if hotkey != declaration.hotkey {
+        entry.insert("hotkey".into(), hotkey.map_or(Value::Null, |h| hotkey_json(&h, label)));
+    }
+    let reglages: Map<String, Value> =
+        declaration.settings.iter().zip(values).map(|(setting, value)| (setting.key.clone(), json!(value))).collect();
+    entry.insert("reglages".into(), Value::Object(reglages));
+    settings.unknown_macros.insert(declaration.id.clone(), Value::Object(entry));
+}
+
+fn hotkey_json(h: &Hotkey, label: &dyn Fn(&Hotkey) -> String) -> Value {
+    json!({
+        "key": h.key,
+        "ctrl": h.modifiers.ctrl,
+        "alt": h.modifiers.alt,
+        "shift": h.modifiers.shift,
+        "win": h.modifiers.win,
+        "label": label(h),
+    })
 }
 
 /// Writes the settings into `dir` (created if needed). The file is replaced in one step, so that
@@ -401,6 +445,36 @@ mod tests {
         assert_eq!(s.unknown_macros.get("future-macro"), Some(&json!({ "speed": 3 })));
         let written = to_json(&s, &label);
         assert!(written.contains("future-macro"), "{written}");
+    }
+
+    #[test]
+    fn external_macros_keep_their_hotkey_and_their_settings() {
+        let text = r#"{ "nom": "Exemple", "commande": "outil.exe", "raccourci": "F10",
+            "reglages": [ { "cle": "limite", "min": 10, "max": 500, "pas": 10, "defaut": 100 },
+                          { "cle": "pause", "min": 0, "max": 9, "defaut": 2 } ] }"#;
+        let (example, _) = crate::external::parse("exemple", text.as_bytes()).unwrap();
+        let f10 = example.hotkey;
+        // Nothing saved yet: the declaration's.
+        let mut s = Settings::defaults(CATALOG);
+        assert_eq!(external_saved(&s, &example), (f10, vec![100, 2]));
+        // Saved, then read back through the file, untouched by the macros of MacroHUD.
+        let ctrl_f10 = Some(Hotkey::new(Modifiers::NONE.with(Modifier::Ctrl), vk::F10));
+        set_external(&mut s, &example, ctrl_f10, &[250, 7], &label);
+        let (back, intact) = parse(to_json(&s, &label).as_bytes(), CATALOG).unwrap();
+        assert!(intact);
+        assert_eq!(external_saved(&back, &example), (ctrl_f10, vec![250, 7]));
+        // The declaration's own hotkey is not written: a new one in the declaration would show.
+        set_external(&mut s, &example, f10, &[100, 2], &label);
+        let written: Value = serde_json::from_str(&to_json(&s, &label)).unwrap();
+        let entry = &written["macros"]["exemple"];
+        assert!(entry.get("hotkey").is_none(), "{entry}");
+        assert_eq!(entry["reglages"], json!({ "limite": 100, "pause": 2 }));
+        // Values out of bounds or not numbers: brought back, or the default.
+        s.unknown_macros.insert("exemple".into(), json!({ "reglages": { "limite": 9999, "pause": "x" } }));
+        assert_eq!(external_saved(&s, &example), (f10, vec![500, 2]));
+        // No hotkey chosen, none proposed: none.
+        s.unknown_macros.insert("exemple".into(), json!({ "hotkey": null }));
+        assert_eq!(external_saved(&s, &example).0, None);
     }
 
     #[test]

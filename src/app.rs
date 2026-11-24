@@ -12,8 +12,13 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::contract::{HudAction, HudState, MacroStatus, MacroView, Message, MessageLevel};
-use crate::engine::{Command, Event, KeySource, MacroSetup, MacroSnapshot, Notice, Snapshot};
+use crate::contract::{
+    ExternalLine, ExternalMacroView, HudAction, HudState, MacroId, MacroStatus, MacroView, Message, MessageLevel,
+};
+use crate::engine::{
+    Command, Event, ExternalSetup, ExternalSnapshot, KeySource, MacroSetup, MacroSnapshot, Notice, Snapshot,
+};
+use crate::external::{self, Declaration};
 use crate::hotkey::Hotkey;
 use crate::hud;
 use crate::macros::{CATALOG, MacroDef};
@@ -33,11 +38,18 @@ pub struct Startup {
     pub settings: Settings,
     /// Warnings to show first (damaged settings, abrupt end last time).
     pub messages: Vec<Message>,
+    /// The declarations of the external macros, in the order of their ids.
+    pub externals: Vec<Declaration>,
 }
+
+/// An external macro as the app knows it: its id, made once for the whole run, and its declaration.
+pub type External = (MacroId, Declaration);
 
 /// Opens the HUD and runs until it is closed.
 pub fn run(startup: Startup) -> Result<(), String> {
-    let first = initial_state(&startup.settings);
+    let externals: Vec<External> =
+        startup.externals.iter().map(|d| (MacroId(external::lasting(&d.id)), d.clone())).collect();
+    let first = initial_state(&startup.settings, &externals);
     let viewport = egui::ViewportBuilder::default()
         .with_title(crate::NAME)
         .with_app_id("macrohud")
@@ -57,7 +69,7 @@ pub fn run(startup: Startup) -> Result<(), String> {
     eframe::run_native(
         crate::NAME,
         options,
-        Box::new(move |cc| Ok(Box::new(HudApp::new(cc, startup, hud::window_size(&first))?))),
+        Box::new(move |cc| Ok(Box::new(HudApp::new(cc, startup, externals, hud::window_size(&first))?))),
     )
     .map_err(|e| e.to_string())
 }
@@ -69,6 +81,7 @@ struct HudApp {
     dir: PathBuf,
     /// The settings as last written (or read).
     saved: Settings,
+    externals: Vec<External>,
     collapsed: bool,
     position: PositionTracker,
     messages: Messages,
@@ -85,12 +98,18 @@ struct HudApp {
 }
 
 impl HudApp {
-    fn new(cc: &eframe::CreationContext<'_>, startup: Startup, size: egui::Vec2) -> Result<Self, String> {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        startup: Startup,
+        externals: Vec<External>,
+        size: egui::Vec2,
+    ) -> Result<Self, String> {
         hud::setup(&cc.egui_ctx);
         let window = HudWindow::from_creation_context(cc);
         let ctx = cc.egui_ctx.clone();
         let engine = platform::spawn_engine(
             macro_setup(&startup.settings, CATALOG),
+            external_setup(&startup.settings, &externals),
             window.raw(),
             Box::new(move || ctx.request_repaint()),
         )?;
@@ -106,6 +125,7 @@ impl HudApp {
             collapsed: startup.settings.collapsed,
             position: PositionTracker::new(startup.settings.position),
             saved: startup.settings,
+            externals,
             messages,
             snapshot: Snapshot::default(),
             size,
@@ -118,7 +138,7 @@ impl HudApp {
     }
 
     fn state(&self) -> HudState {
-        hud_state(&self.snapshot, CATALOG, self.collapsed, self.messages.current())
+        hud_state(&self.snapshot, CATALOG, &self.externals, self.collapsed, self.messages.current())
     }
 
     fn apply(&mut self, ctx: &egui::Context, action: HudAction) {
@@ -139,6 +159,7 @@ impl HudApp {
                 self.stop_window_capture();
             }
             HudAction::SetOptions(id, options) => self.engine.send(Command::SetOptions(id, options)),
+            HudAction::SetSetting(id, key, value) => self.engine.send(Command::SetSetting(id, key, value)),
             HudAction::SetCollapsed(collapsed) => self.collapsed = collapsed,
             HudAction::StartDrag => ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag),
             HudAction::Quit => {
@@ -157,6 +178,11 @@ impl HudApp {
             if let Some(entry) = current.macros.iter_mut().find(|e| e.id == m.id) {
                 entry.hotkey = m.hotkey;
                 entry.options = m.options;
+            }
+        }
+        for x in &self.snapshot.externals {
+            if let Some((_, declaration)) = self.externals.iter().find(|(id, _)| *id == x.id) {
+                settings::set_external(&mut current, declaration, x.hotkey, &x.values, &|_| x.hotkey_label.clone());
             }
         }
         current
@@ -295,8 +321,19 @@ pub fn macro_setup(settings: &Settings, catalog: &[MacroDef]) -> Vec<MacroSetup>
         .collect()
 }
 
+/// What each external macro starts with: its declaration and its saved settings.
+pub fn external_setup(settings: &Settings, externals: &[External]) -> Vec<ExternalSetup> {
+    externals
+        .iter()
+        .map(|(_, declaration)| {
+            let (hotkey, values) = settings::external_saved(settings, declaration);
+            ExternalSetup { declaration: declaration.clone(), hotkey, values }
+        })
+        .collect()
+}
+
 /// The state shown before the engine's first snapshot (it only sizes the window).
-fn initial_state(settings: &Settings) -> HudState {
+fn initial_state(settings: &Settings, externals: &[External]) -> HudState {
     let snapshot = Snapshot {
         macros: macro_setup(settings, CATALOG)
             .iter()
@@ -309,14 +346,35 @@ fn initial_state(settings: &Settings) -> HudState {
                 suspended: false,
             })
             .collect(),
+        externals: externals
+            .iter()
+            .zip(external_setup(settings, externals))
+            .map(|((id, _), x)| ExternalSnapshot {
+                id: *id,
+                status: MacroStatus::Stopped,
+                hotkey: x.hotkey,
+                hotkey_label: x.hotkey.map(|h| h.label(&|_| None)).unwrap_or_default(),
+                line: ExternalLine::Stopped(x.declaration.stopped_line(&x.values)),
+                values: x.values,
+                badge: None,
+                suspended: false,
+                alert: None,
+            })
+            .collect(),
         capturing: None,
         notice: None,
     };
-    hud_state(&snapshot, CATALOG, settings.collapsed, None)
+    hud_state(&snapshot, CATALOG, externals, settings.collapsed, None)
 }
 
 /// Builds what the HUD receives.
-pub fn hud_state(snapshot: &Snapshot, catalog: &[MacroDef], collapsed: bool, message: Option<&Message>) -> HudState {
+pub fn hud_state(
+    snapshot: &Snapshot,
+    catalog: &[MacroDef],
+    externals: &[External],
+    collapsed: bool,
+    message: Option<&Message>,
+) -> HudState {
     HudState {
         app_name: crate::NAME,
         version: crate::VERSION,
@@ -336,9 +394,35 @@ pub fn hud_state(snapshot: &Snapshot, catalog: &[MacroDef], collapsed: bool, mes
                 }
             })
             .collect(),
+        external_macros: externals
+            .iter()
+            .map(|(id, declaration)| external_view(*id, declaration, snapshot.externals.iter().find(|x| x.id == *id)))
+            .collect(),
         capturing: snapshot.capturing,
         message: message.cloned(),
         collapsed,
+    }
+}
+
+/// The line of an external macro: its declaration, and what the engine says of it (`None`: before
+/// its first snapshot, as declared).
+fn external_view(id: MacroId, declaration: &Declaration, live: Option<&ExternalSnapshot>) -> ExternalMacroView {
+    let values = live.map_or_else(|| declaration.defaults(), |x| x.values.clone());
+    ExternalMacroView {
+        id,
+        name: declaration.name.clone(),
+        description: declaration.description.clone(),
+        status: live.map_or(MacroStatus::Stopped, |x| x.status.clone()),
+        hotkey: live.map_or_else(
+            || declaration.hotkey.map(|h| h.label(&|_| None)).unwrap_or_default(),
+            |x| x.hotkey_label.clone(),
+        ),
+        line: live.map_or_else(|| ExternalLine::Stopped(declaration.stopped_line(&values)), |x| x.line.clone()),
+        badge: live.and_then(|x| x.badge.clone()),
+        suspended: live.is_some_and(|x| x.suspended),
+        alert: live.and_then(|x| x.alert.clone()),
+        settings: declaration.settings.iter().zip(&values).map(|(setting, value)| setting.at(*value)).collect(),
+        info: declaration.info.clone(),
     }
 }
 
@@ -631,9 +715,9 @@ mod tests {
                 },
             ],
             capturing: Some(MacroId::HOLD_CLICK),
-            notice: None,
+            ..Snapshot::default()
         };
-        let state = hud_state(&snapshot, CATALOG, true, Some(&info("bonjour")));
+        let state = hud_state(&snapshot, CATALOG, &[], true, Some(&info("bonjour")));
         assert_eq!(state.app_name, "MacroHUD");
         assert_eq!(state.version, crate::VERSION);
         assert_eq!(state.title(), format!("MacroHUD {}", crate::VERSION));
@@ -653,12 +737,66 @@ mod tests {
         assert_eq!(multi.options, MacroOptions::MultiClick { button: MouseButton::Middle, rate: ClickRate::MAX });
     }
 
+    fn example() -> Declaration {
+        let text = r#"{ "nom": "Exemple", "description": "Clique toutes les deux secondes", "commande": "outil.exe",
+            "raccourci": "F10", "boutons": ["droit"],
+            "reglages": [ { "cle": "limite", "nom": "Limite de clics", "unite": "clics", "min": 10, "max": 500, "pas": 10, "defaut": 100 } ],
+            "etat_arretee": "limite {limite} clics", "info": "Un vrai clic n'arrête pas cette macro." }"#;
+        external::parse("exemple", text.as_bytes()).expect("declaration").0
+    }
+
+    #[test]
+    fn external_macros_come_after_the_others_with_their_saved_settings() {
+        use crate::contract::{Badge, BadgeColor};
+        let externals = vec![(MacroId("exemple"), example())];
+        let mut settings = Settings::defaults(CATALOG);
+        let f11 = Hotkey::new(Modifiers::NONE, vk::F11);
+        settings::set_external(&mut settings, &externals[0].1, Some(f11), &[200], &|_| "F11".into());
+        // Before the engine's first word: as saved.
+        let state = initial_state(&settings, &externals);
+        assert_eq!(state.macros.len(), CATALOG.len());
+        let first = &state.external_macros[0];
+        assert_eq!((first.name.as_str(), first.description.as_str()), ("Exemple", "Clique toutes les deux secondes"));
+        assert_eq!((first.status.clone(), first.hotkey.as_str()), (MacroStatus::Stopped, "F11"));
+        assert_eq!(first.line, ExternalLine::Stopped(Some("limite 200 clics".into())));
+        assert_eq!(first.settings[0].value, 200);
+        assert_eq!(first.settings[0].name, "Limite de clics");
+        assert_eq!(first.info.as_deref(), Some("Un vrai clic n'arrête pas cette macro."));
+        // What the engine says of it.
+        let snapshot = Snapshot {
+            externals: vec![ExternalSnapshot {
+                id: MacroId("exemple"),
+                status: MacroStatus::Active,
+                hotkey: Some(f11),
+                hotkey_label: "F11".into(),
+                values: vec![300],
+                line: ExternalLine::Active(Some("12/300".into())),
+                badge: Some(Badge { color: BadgeColor::Green, text: "Clic".into() }),
+                suspended: true,
+                alert: None,
+            }],
+            ..Snapshot::default()
+        };
+        let state = hud_state(&snapshot, CATALOG, &externals, false, None);
+        let view = &state.external_macros[0];
+        assert_eq!(
+            (view.status.clone(), view.line.clone()),
+            (MacroStatus::Active, ExternalLine::Active(Some("12/300".into())))
+        );
+        assert_eq!(view.badge.as_ref().map(|b| b.color), Some(BadgeColor::Green));
+        assert!(view.suspended);
+        assert_eq!(view.settings[0].value, 300);
+        // Kept as the engine has it.
+        let setup = external_setup(&settings, &externals);
+        assert_eq!((setup[0].hotkey, setup[0].values.clone()), (Some(f11), vec![200]));
+    }
+
     #[test]
     fn the_first_state_comes_from_the_settings() {
         let mut settings = Settings::defaults(CATALOG);
         settings.collapsed = true;
         settings.macros[0].options = MacroOptions::HoldClick { button: MouseButton::Middle };
-        let state = initial_state(&settings);
+        let state = initial_state(&settings, &[]);
         assert!(state.collapsed);
         assert_eq!(state.macros[0].hotkey, "F8");
         assert_eq!(state.macros[0].status, MacroStatus::Stopped);
