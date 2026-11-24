@@ -2,7 +2,9 @@
 //! drawn with egui. A title bar, one line per macro (▶ button, state, hotkey on the right), the
 //! settings of a macro unfolded under its line, the messages, and a small pill when folded.
 //! « Multi-clic » follows track A of its preview (D-26, `maquettes/multi-clic/apercu.html`): its
-//! speed is set with a slider from 1 to 15, also while it runs.
+//! speed is set with a slider from 1 to 15, also while it runs. The external macros (D-32) follow
+//! MacroHUD's own, with lines of the same shape (D-37, `maquettes/macro-externe/apercu.html`): step
+//! pill, « En pause » and « Terminée » from their script, amber box, sliders for their settings.
 //!
 //! What the rest of MacroHUD uses (interface set by the "programmation" session):
 //!
@@ -11,8 +13,8 @@
 //! - [`window_size`]: the window's inner size, in points, for a given state (the window follows it);
 //! - [`TRANSPARENT`]: whether the window is transparent (rounded corners, folded pill);
 //! - [`MESSAGE_DURATION`]: how long a message stays shown;
-//! - [`window_icon`]: the window's icon (taskbar). If `src/hud/icone.ico` exists, it also becomes
-//!   the icon of `macrohud.exe` (see `build.rs`).
+//! - [`window_icon`]: the window's icon (taskbar, Alt+Tab): the logo (D-33), from `icone.ico`,
+//!   which `build.rs` also makes the icon of `macrohud.exe`.
 //!
 //! Everything the HUD shows comes from `crate::contract` (docs/CONTRAT-HUD.md); everything it asks
 //! goes through [`HudAction`]. Between frames it only remembers which macro has its settings
@@ -20,6 +22,7 @@
 //! same layout. `cargo test` renders every situation to PNG, without a screen (`render.rs`).
 
 mod icons;
+mod logo;
 mod parts;
 mod style;
 mod text;
@@ -33,10 +36,11 @@ use std::time::Duration;
 use eframe::egui::{self, CursorIcon, Id, Painter, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
 use crate::contract::{
-    HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, MessageKind, MessageLevel, MouseButton,
+    Badge, BadgeColor, ExternalLine, ExternalMacroView, HudAction, HudState, MacroId, MacroOptions, MacroStatus,
+    MacroView, MessageKind, MessageLevel, MouseButton,
 };
 use icons::Icon;
-use parts::{IconButton, KEY_HEIGHT, KeyLook, MessageBox};
+use parts::{AlertBox, IconButton, KEY_HEIGHT, KeyLook, MessageBox, PillColour};
 use style as s;
 
 /// The window is transparent around the panel: rounded corners, and the folded pill.
@@ -51,9 +55,9 @@ pub fn setup(ctx: &egui::Context) {
     text::install(ctx);
 }
 
-/// The window's icon: no icon of its own yet (it would need its own mock-ups), so the default one.
+/// The window's icon (taskbar, Alt+Tab): the logo of MacroHUD (D-33).
 pub fn window_icon() -> egui::IconData {
-    egui::IconData::default()
+    logo::window_icon()
 }
 
 /// The window's inner size, in points: the HUD, its 1 px black ring included.
@@ -81,6 +85,85 @@ fn set_open_macro(id: Option<MacroId>) {
     OPEN.with(|open| open.set(id));
 }
 
+// The macros -----------------------------------------------------------------------------------
+
+/// One macro of the HUD: one of MacroHUD's own, or an external one (D-32), whose line has the same
+/// shape (D-37).
+#[derive(Clone, Copy)]
+enum Item<'a> {
+    Own(&'a MacroView),
+    External(&'a ExternalMacroView),
+}
+
+impl<'a> Item<'a> {
+    fn id(self) -> MacroId {
+        match self {
+            Item::Own(view) => view.id,
+            Item::External(view) => view.id,
+        }
+    }
+
+    fn name(self) -> &'a str {
+        match self {
+            Item::Own(view) => view.name,
+            Item::External(view) => &view.name,
+        }
+    }
+
+    /// Its hotkey as text; empty for an external macro that has none.
+    fn hotkey(self) -> &'a str {
+        match self {
+            Item::Own(view) => &view.hotkey,
+            Item::External(view) => &view.hotkey,
+        }
+    }
+
+    fn status(self) -> &'a MacroStatus {
+        match self {
+            Item::Own(view) => &view.status,
+            Item::External(view) => &view.status,
+        }
+    }
+
+    fn active(self) -> bool {
+        *self.status() == MacroStatus::Active
+    }
+
+    /// Something can be asked of it: not a macro « à venir ».
+    fn available(self) -> bool {
+        match self {
+            Item::Own(view) => view.available,
+            Item::External(_) => true,
+        }
+    }
+
+    /// Active, its clicks waiting while the mouse is on the HUD.
+    fn suspended(self) -> bool {
+        match self {
+            Item::Own(view) => view.suspended,
+            Item::External(view) => view.suspended,
+        }
+    }
+
+    /// The step pill of an active external macro.
+    fn badge(self) -> Option<&'a Badge> {
+        match self {
+            Item::External(view) if self.active() => view.badge.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// An external macro whose script stopped by itself (« Terminée »): blue border.
+    fn finished(self) -> bool {
+        matches!(self, Item::External(view) if !self.active() && matches!(view.line, ExternalLine::Finished(_)))
+    }
+}
+
+/// Every macro, in the order of the HUD: MacroHUD's own, then the external ones (D-32).
+fn items(state: &HudState) -> Vec<Item<'_>> {
+    state.macros.iter().map(Item::Own).chain(state.external_macros.iter().map(Item::External)).collect()
+}
+
 // Layout ---------------------------------------------------------------------------------------
 
 /// Width of a settings block's content (12 px left padding, 8 px right).
@@ -89,13 +172,19 @@ const CONTENT_WIDTH: f32 = s::PANEL_WIDTH - 2.0 - 12.0 - 8.0;
 const BUBBLE_WIDTH: f32 = s::PANEL_WIDTH;
 /// Widest keycap on a macro line and on the pill; a longer hotkey is cut with « … ».
 const KEY_MAX_IN_ROW: f32 = 84.0;
+/// Widest state words on the folded pill (« Active 12/100 »); longer ones are cut with « … ».
+const CHIP_WORDS_MAX: f32 = 140.0;
+/// The folded pill is never wider than the unfolded HUD (D-54).
+const CHIP_MAX: f32 = s::PANEL_WIDTH;
 
 /// The full-width blocks stacked under the title bar.
 enum Block {
     /// Line of macro `i`.
     Row(usize),
-    /// Why macro `i` cannot run.
+    /// Why a macro cannot run.
     Notice(MessageBox),
+    /// The amber box of an external macro, under its line.
+    Alert(AlertBox),
     /// Settings of macro `i`, with the current message when it concerns that macro.
     Options(usize, Option<MessageBox>),
     /// The current message, below the macros.
@@ -105,6 +194,8 @@ enum Block {
 /// Where everything goes; computed the same way by [`window_size`] and [`draw`].
 struct Layout<'a> {
     state: &'a HudState,
+    /// Every macro, in the order of the HUD.
+    items: Vec<Item<'a>>,
     /// Macro whose settings show under its line.
     open: Option<usize>,
     blocks: Vec<(Block, f32)>,
@@ -117,7 +208,8 @@ struct Layout<'a> {
 
 impl<'a> Layout<'a> {
     fn new(state: &'a HudState, remembered: Option<MacroId>) -> Self {
-        let usable = |id: MacroId| state.macros.iter().position(|m| m.id == id && m.available);
+        let items = items(state);
+        let usable = |id: MacroId| items.iter().position(|item| item.id() == id && item.available());
         // A refused hotkey keeps its macro's settings open, like the capture that led to it.
         let refused = state
             .message
@@ -131,7 +223,6 @@ impl<'a> Layout<'a> {
             .and_then(usable)
             .or_else(|| refused.and_then(usable))
             .or_else(|| remembered.and_then(usable));
-        let mut layout = Layout { state, open, blocks: Vec::new(), chip_width: 0.0, bubble: None, size: Vec2::ZERO };
         // « Choisir une autre touche » only for a macro that can take a new hotkey.
         let message_box = |width: f32| {
             state
@@ -139,54 +230,71 @@ impl<'a> Layout<'a> {
                 .as_ref()
                 .map(|m| MessageBox::from_contract(m, m.about.filter(|&id| usable(id).is_some()), width))
         };
+        let mut blocks = Vec::new();
+        let (chip, bubble, size);
         if state.collapsed {
-            layout.chip_width = chip_width(main_macro(state));
-            layout.bubble = message_box(BUBBLE_WIDTH);
-            let mut size = vec2(layout.chip_width + 2.0, s::CHIP_HEIGHT + 2.0);
-            if let Some(bubble) = &layout.bubble {
-                size.x = size.x.max(BUBBLE_WIDTH + 2.0);
-                size.y += 6.0 + bubble.height() + 2.0;
+            chip = chip_width(main_item(&items));
+            bubble = message_box(BUBBLE_WIDTH);
+            let mut folded = vec2(chip + 2.0, s::CHIP_HEIGHT + 2.0);
+            if let Some(bubble) = &bubble {
+                folded.x = folded.x.max(BUBBLE_WIDTH + 2.0);
+                folded.y += 6.0 + bubble.height() + 2.0;
             }
-            layout.size = size;
-            return layout;
-        }
-        // The message sits in the settings of the macro it concerns when they are open, else below.
-        let open_id = open.map(|i| state.macros[i].id);
-        let in_settings = state.message.as_ref().is_some_and(|m| m.about.is_some() && m.about == open_id);
-        for (i, view) in state.macros.iter().enumerate() {
-            layout.blocks.push((Block::Row(i), s::ROW_HEIGHT));
-            if let MacroStatus::Unavailable(reason) = &view.status {
-                let notice = MessageBox::new(MessageLevel::Warning, "Macro indisponible", reason, CONTENT_WIDTH);
-                let height = framed_height(&notice);
-                layout.blocks.push((Block::Notice(notice), height));
+            size = folded;
+        } else {
+            (chip, bubble) = (0.0, None);
+            // The message sits in the settings of the macro it concerns when they are open, else below.
+            let open_id = open.map(|i| items[i].id());
+            let in_settings = state.message.as_ref().is_some_and(|m| m.about.is_some() && m.about == open_id);
+            for (i, item) in items.iter().enumerate() {
+                blocks.push((Block::Row(i), s::ROW_HEIGHT));
+                if let MacroStatus::Unavailable(reason) = item.status() {
+                    let notice = MessageBox::new(MessageLevel::Warning, "Macro indisponible", reason, CONTENT_WIDTH);
+                    let height = framed_height(notice.height());
+                    blocks.push((Block::Notice(notice), height));
+                }
+                if let Item::External(view) = item
+                    && let Some(alert) = &view.alert
+                {
+                    let alert = AlertBox::new(alert, CONTENT_WIDTH);
+                    let height = framed_height(alert.height());
+                    blocks.push((Block::Alert(alert), height));
+                }
+                if open == Some(i) {
+                    let message = if in_settings { message_box(CONTENT_WIDTH) } else { None };
+                    let capturing = state.capturing == Some(item.id());
+                    let height = match item {
+                        Item::Own(view) => options_height(view.options, capturing, message.as_ref()),
+                        Item::External(view) => external_options_height(view, capturing, message.as_ref()),
+                    };
+                    blocks.push((Block::Options(i, message), height));
+                }
             }
-            if open == Some(i) {
-                let message = if in_settings { message_box(CONTENT_WIDTH) } else { None };
-                let height = options_height(view.options, state.capturing == Some(view.id), message.as_ref());
-                layout.blocks.push((Block::Options(i, message), height));
+            if !in_settings && let Some(message) = message_box(CONTENT_WIDTH) {
+                let height = framed_height(message.height());
+                blocks.push((Block::Message(message), height));
             }
+            let content: f32 = blocks.iter().map(|(_, height)| height).sum();
+            // Ring, border, title bar, blocks, border, ring.
+            size = vec2(s::PANEL_WIDTH + 2.0, 1.0 + 1.0 + s::BAR_HEIGHT + content + 1.0 + 1.0);
         }
-        if !in_settings && let Some(message) = message_box(CONTENT_WIDTH) {
-            let height = framed_height(&message);
-            layout.blocks.push((Block::Message(message), height));
-        }
-        let content: f32 = layout.blocks.iter().map(|(_, height)| height).sum();
-        // Ring, border, title bar, blocks, border, ring.
-        layout.size = vec2(s::PANEL_WIDTH + 2.0, 1.0 + 1.0 + s::BAR_HEIGHT + content + 1.0 + 1.0);
-        layout
+        Layout { state, items, open, blocks, chip_width: chip, bubble, size }
     }
 }
 
-/// A message in its own block: 8 px above it, then 10 px and the block's line below.
-fn framed_height(message: &MessageBox) -> f32 {
-    8.0 + message.height() + 10.0 + 1.0
+/// A box in its own block: 8 px above it, then 10 px and the block's line below.
+fn framed_height(box_height: f32) -> f32 {
+    8.0 + box_height + 10.0 + 1.0
 }
+
+/// A setting with a slider: its title line, the slider, 10 px.
+const SLIDER_SETTING_HEIGHT: f32 = s::LINE_12 + 4.0 + parts::SLIDER_HEIGHT + 10.0;
 
 /// Settings: button selector, speed of « Multi-clic », hotkey line (or the capture zone), message.
 fn options_height(options: MacroOptions, capturing: bool, message: Option<&MessageBox>) -> f32 {
     let selector = s::LINE_12 + 4.0 + parts::SELECTOR_HEIGHT + 10.0;
     let speed = match options {
-        MacroOptions::MultiClick { .. } => s::LINE_12 + 4.0 + parts::SLIDER_HEIGHT + 10.0,
+        MacroOptions::MultiClick { .. } => SLIDER_SETTING_HEIGHT,
         MacroOptions::HoldClick { .. } => 0.0,
     };
     let hotkey = if capturing { parts::CAPTURE_HEIGHT } else { 26.0 };
@@ -194,34 +302,86 @@ fn options_height(options: MacroOptions, capturing: bool, message: Option<&Messa
     8.0 + selector + speed + hotkey + message + 10.0 + 1.0
 }
 
-/// The macro the folded pill shows: the first active one, else the first available one.
-fn main_macro(state: &HudState) -> Option<&MacroView> {
-    state
-        .macros
-        .iter()
-        .find(|m| m.status == MacroStatus::Active)
-        .or_else(|| state.macros.iter().find(|m| m.available))
-        .or_else(|| state.macros.first())
+/// The help line of an external macro's settings, wrapped, with room for its signs (D-56).
+fn info_lines(view: &ExternalMacroView) -> Vec<String> {
+    view.info
+        .as_deref()
+        .map(str::trim)
+        .filter(|info| !info.is_empty())
+        .map_or_else(Vec::new, |info| text::wrap(&text::with_sign_room(info), 12.0, s::REGULAR, CONTENT_WIDTH))
 }
 
-/// Icon and word of the pill. « Multi-clic » whose clicks wait shows the two bars of « En pause »
-/// but keeps its word: the pill does not change size under the mouse.
-fn chip_state(view: &MacroView) -> (Icon, &'static str) {
-    match view.status {
-        MacroStatus::Active if view.suspended => (Icon::Pause, "Active"),
-        MacroStatus::Active => (Icon::Dot, "Active"),
-        MacroStatus::Stopped => (Icon::Stop, "Arrêtée"),
-        MacroStatus::Unavailable(_) => (Icon::Warning, "Indisponible"),
+/// Settings of an external macro (D-37): a slider per setting, the hotkey line (or the capture
+/// zone), the message, the help line.
+fn external_options_height(view: &ExternalMacroView, capturing: bool, message: Option<&MessageBox>) -> f32 {
+    let settings = view.settings.len() as f32 * SLIDER_SETTING_HEIGHT;
+    let hotkey = if capturing { parts::CAPTURE_HEIGHT } else { 26.0 };
+    let message = message.map_or(0.0, |m| 8.0 + m.height());
+    let lines = info_lines(view).len();
+    let info = if lines == 0 { 0.0 } else { 10.0 + lines as f32 * s::LINE_MESSAGE };
+    8.0 + settings + hotkey + message + info + 10.0 + 1.0
+}
+
+/// The macro the folded pill shows: the active one (one at a time, D-20), else the first available
+/// one of MacroHUD.
+fn main_item<'a>(items: &[Item<'a>]) -> Option<Item<'a>> {
+    items
+        .iter()
+        .find(|item| item.active())
+        .or_else(|| items.iter().find(|item| matches!(item, Item::Own(_)) && item.available()))
+        .or_else(|| items.first())
+        .copied()
+}
+
+/// Icon and words of the pill. A macro whose clicks wait for the mouse to leave the HUD shows the
+/// two bars of « En pause » but keeps its words: the pill does not change size under the mouse.
+/// An active external macro adds the text of its state (« Active 12/100 »), or says « En pause »
+/// while its script waits.
+fn chip_state(item: Item<'_>) -> (Icon, String) {
+    match item.status() {
+        MacroStatus::Active => {
+            let icon = if item.suspended() { Icon::Pause } else { Icon::Dot };
+            match item {
+                Item::External(view) => match &view.line {
+                    ExternalLine::Waiting(_) => (Icon::Pause, "En pause".to_owned()),
+                    ExternalLine::Active(Some(state)) if !state.trim().is_empty() => {
+                        (icon, format!("Active {}", state.trim()))
+                    }
+                    _ => (icon, "Active".to_owned()),
+                },
+                Item::Own(_) => (icon, "Active".to_owned()),
+            }
+        }
+        MacroStatus::Stopped => (Icon::Stop, "Arrêtée".to_owned()),
+        MacroStatus::Unavailable(_) => (Icon::Warning, "Indisponible".to_owned()),
     }
 }
 
+/// Room for the pill's words: at most [`CHIP_WORDS_MAX`], and what the pill leaves under
+/// [`CHIP_MAX`] once its grip, icon, step pill, hotkey and arrow are placed; the words are cut first.
+fn chip_words_room(item: Item<'_>) -> f32 {
+    let mut others = 1.0 + 6.0 + 12.0 + 6.0 + 10.0 + 5.0 + 2.0 + 6.0 + 24.0 + 4.0 + 1.0;
+    if let Some(badge) = item.badge() {
+        others += parts::pill_width(&badge.text) + 6.0;
+    }
+    if !item.hotkey().is_empty() {
+        others += parts::keycap_width(item.hotkey(), KeyLook::Normal, KEY_MAX_IN_ROW) + 6.0;
+    }
+    (CHIP_MAX - others).clamp(0.0, CHIP_WORDS_MAX)
+}
+
 /// Width of the folded pill, its border included.
-fn chip_width(main: Option<&MacroView>) -> f32 {
+fn chip_width(main: Option<Item<'_>>) -> f32 {
     let mut width = 1.0 + 6.0 + 12.0 + 6.0;
-    if let Some(view) = main {
-        let (_, word) = chip_state(view);
-        width += 10.0 + 5.0 + text::width(word, 12.0, s::BOLD) + 2.0 + 6.0;
-        width += parts::keycap_width(&view.hotkey, KeyLook::Normal, KEY_MAX_IN_ROW) + 6.0;
+    if let Some(item) = main {
+        let (_, words) = chip_state(item);
+        width += 10.0 + 5.0 + text::width(&words, 12.0, s::BOLD).min(chip_words_room(item)) + 2.0 + 6.0;
+        if let Some(badge) = item.badge() {
+            width += parts::pill_width(&badge.text) + 6.0;
+        }
+        if !item.hotkey().is_empty() {
+            width += parts::keycap_width(item.hotkey(), KeyLook::Normal, KEY_MAX_IN_ROW) + 6.0;
+        }
     }
     (width + 24.0 + 4.0 + 1.0).ceil()
 }
@@ -273,6 +433,55 @@ fn state_line(view: &MacroView) -> (Option<Icon>, String, f32) {
     }
 }
 
+/// The state line of an external macro (D-37): « ■ Arrêtée · limite 100 clics » (or « ■ Arrêtée »
+/// alone), « ● Active · 12/100 », « ❚❚ En pause · attend sa fenêtre » while its script waits,
+/// « ✓ Terminée · 100/100 clics » once it stopped by itself. While the mouse is on the HUD, like
+/// « Multi-clic » (D-26, D-53): « ❚❚ En pause · souris ici ».
+fn external_state_line(view: &ExternalMacroView) -> (Option<Icon>, String, f32) {
+    let joined = |word: &str, text: Option<&str>| match text.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(text) => format!("{word} · {text}"),
+        None => word.to_owned(),
+    };
+    match (&view.status, &view.line) {
+        (MacroStatus::Unavailable(_), _) => (Some(Icon::Warning), "Indisponible".to_owned(), s::SEMIBOLD),
+        (MacroStatus::Active, ExternalLine::Waiting(why)) => {
+            (Some(Icon::Pause), joined("En pause", Some(why)), s::SEMIBOLD)
+        }
+        (MacroStatus::Active, _) if view.suspended => {
+            (Some(Icon::Pause), "En pause · souris ici".to_owned(), s::SEMIBOLD)
+        }
+        (MacroStatus::Active, ExternalLine::Active(state)) => {
+            (Some(Icon::Dot), joined("Active", state.as_deref()), s::SEMIBOLD)
+        }
+        (MacroStatus::Active, _) => (Some(Icon::Dot), "Active".to_owned(), s::SEMIBOLD),
+        (MacroStatus::Stopped, ExternalLine::Finished(end)) => {
+            (Some(Icon::Check), joined("Terminée", Some(end)), s::REGULAR)
+        }
+        (MacroStatus::Stopped, ExternalLine::Stopped(state)) => {
+            (Some(Icon::Stop), joined("Arrêtée", state.as_deref()), s::REGULAR)
+        }
+        (MacroStatus::Stopped, _) => (Some(Icon::Stop), "Arrêtée".to_owned(), s::REGULAR),
+    }
+}
+
+/// The state line of any macro.
+fn item_state_line(item: Item<'_>) -> (Option<Icon>, String, f32) {
+    match item {
+        Item::Own(view) => state_line(view),
+        Item::External(view) => external_state_line(view),
+    }
+}
+
+/// The colours of the step pill, as the script names them.
+fn pill_colour(color: BadgeColor) -> PillColour {
+    match color {
+        BadgeColor::Amber => PillColour::Amber,
+        BadgeColor::Green => PillColour::Green,
+        BadgeColor::Blue => PillColour::Blue,
+        BadgeColor::Grey => PillColour::Grey,
+    }
+}
+
 // Painting -------------------------------------------------------------------------------------
 
 /// Draws the HUD; `shadow` adds the drop shadow of the mock-up (renders only: in the window it
@@ -319,7 +528,13 @@ fn paint_panel(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: 
         match block {
             Block::Row(i) => paint_row(ui, &p, area, id.with(i), layout, *i, last, actions),
             Block::Options(i, message) => {
-                paint_options(ui, &p, area, id.with(i), layout, *i, message.as_ref(), last, actions);
+                let message = message.as_ref();
+                match layout.items[*i] {
+                    Item::Own(view) => paint_options(ui, &p, area, id.with(i), layout, view, message, last, actions),
+                    Item::External(view) => {
+                        paint_external_options(ui, &p, area, id.with(i), layout, view, message, last, actions);
+                    }
+                }
             }
             Block::Notice(message) | Block::Message(message) => {
                 parts::block(&p, area, s::OPTIONS, s::ROW_LINE, last);
@@ -329,6 +544,11 @@ fn paint_panel(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: 
                 {
                     actions.push(HudAction::StartCapture(macro_id));
                 }
+            }
+            Block::Alert(alert) => {
+                parts::block(&p, area, s::OPTIONS, s::ROW_LINE, last);
+                let rect = Rect::from_min_size(area.min + vec2(12.0, 8.0), vec2(CONTENT_WIDTH, alert.height()));
+                parts::alert(&p, rect, alert);
             }
         }
         top += height;
@@ -370,7 +590,7 @@ fn paint_bar(ui: &Ui, p: &Painter, inner: Rect, id: Id, state: &HudState, action
     inner.top() + s::BAR_HEIGHT
 }
 
-/// One macro line: ▶ / ■, name and state, hotkey, settings arrow.
+/// One macro line: ▶ / ■, name and state, step pill (external macros), hotkey, settings arrow.
 #[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
 fn paint_row(
     ui: &Ui,
@@ -382,10 +602,10 @@ fn paint_row(
     last: bool,
     actions: &mut Vec<HudAction>,
 ) {
-    let view = &layout.state.macros[index];
-    let active = view.status == MacroStatus::Active;
-    let unavailable = matches!(view.status, MacroStatus::Unavailable(_));
-    let soon = !view.available;
+    let item = layout.items[index];
+    let active = item.active();
+    let unavailable = matches!(item.status(), MacroStatus::Unavailable(_));
+    let soon = !item.available();
     let open = layout.open == Some(index);
     let (fill, line, stripe) = if active {
         (s::ON, s::ON_LINE, s::ON_INK)
@@ -393,6 +613,9 @@ fn paint_row(
         (s::SOON_ROW, s::ROW_LINE, s::SOON_STRIPE)
     } else if unavailable {
         (s::ROW, s::ROW_LINE, s::WARN)
+    } else if item.finished() {
+        // « Terminée »: the blue border of the preview (D-37).
+        (s::ROW, s::ROW_LINE, s::INFO)
     } else {
         (s::ROW, s::ROW_LINE, s::STRIPE)
     };
@@ -404,7 +627,11 @@ fn paint_row(
     // ▶ / ■ button; a macro « à venir » shows its kind instead, an unavailable one a dead button.
     let toggle = Rect::from_min_size(pos2(content.left() + 14.0, (middle - 16.0).round()), vec2(32.0, 32.0));
     if soon {
-        icons::paint(p, kind_icon(view), Rect::from_center_size(toggle.center(), vec2(16.0, 16.0)), s::SOON_TEXT);
+        let kind = match item {
+            Item::Own(view) => kind_icon(view),
+            Item::External(_) => Icon::Mouse,
+        };
+        icons::paint(p, kind, Rect::from_center_size(toggle.center(), vec2(16.0, 16.0)), s::SOON_TEXT);
     } else if unavailable {
         p.rect_stroke(toggle, 8, Stroke::new(1.0, s::SOON_STRIPE), StrokeKind::Inside);
         icons::paint(p, Icon::Play, Rect::from_center_size(toggle.center(), vec2(13.0, 13.0)), s::SOON_TEXT);
@@ -434,11 +661,11 @@ fn paint_row(
         };
         let label = if active { "Arrêter" } else { "Activer" };
         if parts::icon_button(ui, p, toggle, id.with("basculer"), &look, label).clicked() {
-            actions.push(if active { HudAction::Stop(view.id) } else { HudAction::Start(view.id) });
+            actions.push(if active { HudAction::Stop(item.id()) } else { HudAction::Start(item.id()) });
         }
     }
 
-    // Settings arrow, then the hotkey, from the right.
+    // Settings arrow, then the hotkey (if any) and the step pill (if any), from the right.
     let arrow = Rect::from_min_size(pos2(content.right() - 6.0 - 24.0, (middle - 12.0).round()), vec2(24.0, 24.0));
     if soon {
         icons::paint(p, Icon::Down, Rect::from_center_size(arrow.center(), vec2(13.0, 13.0)), s::SOON_CHEVRON);
@@ -455,24 +682,38 @@ fn paint_row(
         };
         let label = if open { "Masquer les réglages" } else { "Afficher les réglages" };
         if parts::icon_button(ui, p, arrow, id.with("reglages"), &look, label).clicked() {
-            set_open_macro(if open { None } else { Some(view.id) });
+            set_open_macro(if open { None } else { Some(item.id()) });
         }
     }
-    let key_look = if soon {
-        KeyLook::Off
-    } else if active {
-        KeyLook::OnGreen
-    } else {
-        KeyLook::Normal
-    };
-    let key_width = parts::keycap_width(&view.hotkey, key_look, KEY_MAX_IN_ROW);
-    let key_left = arrow.left() - 8.0 - key_width;
-    let key = Rect::from_min_size(pos2(key_left, (middle - 12.0).round()), vec2(key_width, KEY_HEIGHT));
-    parts::keycap(p, key, &view.hotkey, key_look);
+    let mut right = arrow.left();
+    if !item.hotkey().is_empty() {
+        let key_look = if soon {
+            KeyLook::Off
+        } else if active {
+            KeyLook::OnGreen
+        } else {
+            KeyLook::Normal
+        };
+        let key_width = parts::keycap_width(item.hotkey(), key_look, KEY_MAX_IN_ROW);
+        let key =
+            Rect::from_min_size(pos2(right - 8.0 - key_width, (middle - 12.0).round()), vec2(key_width, KEY_HEIGHT));
+        parts::keycap(p, key, item.hotkey(), key_look);
+        right = key.left();
+    }
+    if let Some(badge) = item.badge() {
+        let width = parts::pill_width(&badge.text);
+        let pill = Rect::from_min_size(
+            pos2(right - 8.0 - width, (middle - parts::PILL_HEIGHT / 2.0).round()),
+            vec2(width, parts::PILL_HEIGHT),
+        );
+        parts::pill(p, pill, pill_colour(badge.color), &badge.text);
+        right = pill.left();
+    }
 
-    // Name, and the state line under it.
+    // Name, and the state line under it; both stop before the pill or the key, cut with « … » when
+    // the room lacks (D-55).
     let left = toggle.right() + 8.0;
-    let max_width = key.left() - 8.0 - left;
+    let max_width = right - 8.0 - left;
     let (name_ink, state_ink) = if active {
         (s::ON_INK, s::ON_INK)
     } else if soon {
@@ -483,10 +724,10 @@ fn paint_row(
         (s::TEXT, s::TEXT_2)
     };
     let text_top = content.top() + ((content.height() - (s::LINE_14 + 2.0 + s::LINE_12)) / 2.0).round();
-    let name = text::line(p, view.name, 14.0, s::SEMIBOLD, name_ink, max_width);
+    let name = text::line(p, item.name(), 14.0, s::SEMIBOLD, name_ink, max_width);
     text::put(p, &name, left, text_top, s::LINE_14);
     let state_top = text_top + s::LINE_14 + 2.0;
-    let (icon, words, weight) = state_line(view);
+    let (icon, words, weight) = item_state_line(item);
     let mut x = left;
     if let Some(icon) = icon {
         let size = if icon == Icon::Warning { 11.0 } else { 9.0 };
@@ -498,8 +739,8 @@ fn paint_row(
     text::put(p, &state, x, state_top, s::LINE_12);
 }
 
-/// Settings of a macro, under its line: held or clicked button, speed of « Multi-clic », hotkey (or
-/// the capture zone), message.
+/// Settings of a macro of MacroHUD, under its line: held or clicked button, speed of « Multi-clic »,
+/// hotkey (or the capture zone), message.
 #[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
 fn paint_options(
     ui: &Ui,
@@ -507,12 +748,11 @@ fn paint_options(
     block: Rect,
     id: Id,
     layout: &Layout<'_>,
-    index: usize,
+    view: &MacroView,
     message: Option<&MessageBox>,
     last: bool,
     actions: &mut Vec<HudAction>,
 ) {
-    let view = &layout.state.macros[index];
     parts::block(p, block, s::OPTIONS, s::ROW_LINE, last);
     let left = block.left() + 12.0;
     let mut y = block.top() + 8.0;
@@ -532,9 +772,7 @@ fn paint_options(
     // « Multi-clic »: « Rapidité » and its value, then the slider. A new speed is asked for at once,
     // also while the macro runs: it counts from the next click (D-22, D-27).
     if let MacroOptions::MultiClick { rate, .. } = view.options {
-        text::draw(p, "Rapidité", 12.0, s::SEMIBOLD, s::TEXT_2, left, y, s::LINE_12);
-        let value = text::line(p, &rate.label(), 12.0, s::BOLD, s::TEXT, f32::INFINITY);
-        text::put(p, &value, left + CONTENT_WIDTH - value.size().x, y, s::LINE_12);
+        setting_title(p, left, y, "Rapidité", &rate.label());
         y += s::LINE_12 + 4.0;
         let line = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::SLIDER_HEIGHT));
         if let Some(new) = parts::rate_slider(ui, p, line, id.with("rapidite"), rate) {
@@ -543,35 +781,130 @@ fn paint_options(
         y += parts::SLIDER_HEIGHT + 10.0;
     }
 
-    if layout.state.capturing == Some(view.id) {
-        let zone = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::CAPTURE_HEIGHT));
+    y = paint_hotkey(ui, p, left, y, id, layout, view.id, &view.hotkey, actions);
+    paint_settings_message(ui, p, left, y, id, message, actions);
+}
+
+/// Settings of an external macro (D-37): a slider per setting, its value written above it; the
+/// hotkey (or the capture zone); the message; the help line of its declaration.
+#[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
+fn paint_external_options(
+    ui: &Ui,
+    p: &Painter,
+    block: Rect,
+    id: Id,
+    layout: &Layout<'_>,
+    view: &ExternalMacroView,
+    message: Option<&MessageBox>,
+    last: bool,
+    actions: &mut Vec<HudAction>,
+) {
+    parts::block(p, block, s::OPTIONS, s::ROW_LINE, last);
+    let left = block.left() + 12.0;
+    let mut y = block.top() + 8.0;
+
+    // A new value is asked for at once; it goes to the script if it runs (D-34).
+    for (k, setting) in view.settings.iter().enumerate() {
+        setting_title(p, left, y, &setting.name, &setting.label());
+        y += s::LINE_12 + 4.0;
+        let line = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, parts::SLIDER_HEIGHT));
+        let range = parts::Range { min: setting.min, max: setting.max, step: setting.step.max(1) };
+        if let Some(value) = parts::slider(ui, p, line, id.with(("reglage", k)), setting.value, range, &setting.name) {
+            actions.push(HudAction::SetSetting(view.id, setting.key.clone(), setting.snap(value)));
+        }
+        y += parts::SLIDER_HEIGHT + 10.0;
+    }
+
+    y = paint_hotkey(ui, p, left, y, id, layout, view.id, &view.hotkey, actions);
+    y = paint_settings_message(ui, p, left, y, id, message, actions);
+    let lines = info_lines(view);
+    if !lines.is_empty() {
+        y += 10.0;
+        for line in &lines {
+            // A few points of slack: the line breaks were measured, the painter must not cut again.
+            let galley = text::line(p, line, 12.0, s::REGULAR, s::TEXT_2, CONTENT_WIDTH + 4.0);
+            text::put(p, &galley, left, y, s::LINE_MESSAGE);
+            let x = left.round();
+            let signs: Vec<_> = text::sign_spots(&galley)
+                .into_iter()
+                .map(|(sign, middle)| (sign, pos2(x + middle, y + s::LINE_MESSAGE / 2.0)))
+                .collect();
+            parts::paint_signs(p, &signs, s::TEXT_2);
+            y += s::LINE_MESSAGE;
+        }
+    }
+}
+
+/// Title line of a setting: its name on the left (cut before the value if needed), its value in
+/// bold on the right.
+fn setting_title(p: &Painter, left: f32, top: f32, name: &str, value: &str) {
+    // The name first, then the value: the order in which the HUD always laid them out.
+    let value_left = left + CONTENT_WIDTH - text::width(value, 12.0, s::BOLD);
+    let name = text::line(p, name, 12.0, s::SEMIBOLD, s::TEXT_2, value_left - 8.0 - left);
+    text::put(p, &name, left, top, s::LINE_12);
+    let value = text::line(p, value, 12.0, s::BOLD, s::TEXT, f32::INFINITY);
+    text::put(p, &value, left + CONTENT_WIDTH - value.size().x, top, s::LINE_12);
+}
+
+/// The hotkey line of a macro's settings (« Raccourci », the key, « Changer »), or the capture zone
+/// while it waits for a key. A macro without a hotkey says « Aucun » (D-52). Returns its bottom.
+#[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
+fn paint_hotkey(
+    ui: &Ui,
+    p: &Painter,
+    left: f32,
+    top: f32,
+    id: Id,
+    layout: &Layout<'_>,
+    macro_id: MacroId,
+    hotkey: &str,
+    actions: &mut Vec<HudAction>,
+) -> f32 {
+    if layout.state.capturing == Some(macro_id) {
+        let zone = Rect::from_min_size(pos2(left, top), vec2(CONTENT_WIDTH, parts::CAPTURE_HEIGHT));
         if parts::capture_zone(ui, p, zone, id.with("capture")) {
             actions.push(HudAction::CancelCapture);
         }
-        y += parts::CAPTURE_HEIGHT;
+        return top + parts::CAPTURE_HEIGHT;
+    }
+    let label_width = text::draw(p, "Raccourci", 12.0, s::SEMIBOLD, s::TEXT_2, left, top, 26.0);
+    let button_width = parts::small_button_width("Changer");
+    let button = Rect::from_min_size(pos2(left + CONTENT_WIDTH - button_width, top), vec2(button_width, 26.0));
+    if parts::small_button(ui, p, button, id.with("changer"), "Changer").clicked() {
+        actions.push(HudAction::StartCapture(macro_id));
+    }
+    let room = button.left() - 6.0 - (left + label_width + 8.0);
+    if hotkey.is_empty() {
+        let none = text::line(p, "Aucun", 12.0, s::REGULAR, s::TEXT_2, room);
+        text::put(p, &none, button.left() - 8.0 - none.size().x, top, 26.0);
     } else {
-        let label_width = text::draw(p, "Raccourci", 12.0, s::SEMIBOLD, s::TEXT_2, left, y, 26.0);
-        let button_width = parts::small_button_width("Changer");
-        let button = Rect::from_min_size(pos2(left + CONTENT_WIDTH - button_width, y), vec2(button_width, 26.0));
-        if parts::small_button(ui, p, button, id.with("changer"), "Changer").clicked() {
-            actions.push(HudAction::StartCapture(view.id));
-        }
-        let room = button.left() - 6.0 - (left + label_width + 8.0);
-        let key_width = parts::keycap_width(&view.hotkey, KeyLook::Normal, room);
-        let key = Rect::from_min_size(pos2(button.left() - 6.0 - key_width, y + 1.0), vec2(key_width, KEY_HEIGHT));
-        parts::keycap(p, key, &view.hotkey, KeyLook::Normal);
-        y += 26.0;
+        let key_width = parts::keycap_width(hotkey, KeyLook::Normal, room);
+        let key = Rect::from_min_size(pos2(button.left() - 6.0 - key_width, top + 1.0), vec2(key_width, KEY_HEIGHT));
+        parts::keycap(p, key, hotkey, KeyLook::Normal);
     }
+    top + 26.0
+}
 
-    if let Some(message) = message {
-        y += 8.0;
-        let rect = Rect::from_min_size(pos2(left, y), vec2(CONTENT_WIDTH, message.height()));
-        if parts::message(ui, p, rect, id.with("message"), message)
-            && let Some(macro_id) = message.retry
-        {
-            actions.push(HudAction::StartCapture(macro_id));
-        }
+/// The message about the macro whose settings are open, under its hotkey line. Returns its bottom.
+fn paint_settings_message(
+    ui: &Ui,
+    p: &Painter,
+    left: f32,
+    top: f32,
+    id: Id,
+    message: Option<&MessageBox>,
+    actions: &mut Vec<HudAction>,
+) -> f32 {
+    let Some(message) = message else {
+        return top;
+    };
+    let rect = Rect::from_min_size(pos2(left, top + 8.0), vec2(CONTENT_WIDTH, message.height()));
+    if parts::message(ui, p, rect, id.with("message"), message)
+        && let Some(macro_id) = message.retry
+    {
+        actions.push(HudAction::StartCapture(macro_id));
     }
+    rect.bottom()
 }
 
 /// Folded: the pill, and under it the current message. « Choisir une autre touche » there also
@@ -579,7 +912,7 @@ fn paint_options(
 fn paint_folded(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: &mut Vec<HudAction>) {
     let p = ui.painter().clone();
     let chip = Rect::from_min_size(rect.min, vec2(layout.chip_width + 2.0, s::CHIP_HEIGHT + 2.0));
-    paint_chip(ui, &p, chip, layout.state, shadow, actions);
+    paint_chip(ui, &p, chip, layout, shadow, actions);
     if let Some(message) = &layout.bubble {
         let size = vec2(BUBBLE_WIDTH + 2.0, message.height() + 2.0);
         let outer = Rect::from_min_size(pos2(rect.left(), chip.bottom() + 6.0), size);
@@ -597,18 +930,18 @@ fn paint_folded(ui: &Ui, rect: Rect, layout: &Layout<'_>, shadow: bool, actions:
     }
 }
 
-/// The pill: state and hotkey of the main macro, « Déplier ».
-fn paint_chip(ui: &Ui, p: &Painter, rect: Rect, state: &HudState, shadow: bool, actions: &mut Vec<HudAction>) {
+/// The pill: state, step pill (external macros) and hotkey of the main macro, « Déplier ».
+fn paint_chip(ui: &Ui, p: &Painter, rect: Rect, layout: &Layout<'_>, shadow: bool, actions: &mut Vec<HudAction>) {
     let body = rect.shrink(1.0);
     let radius = (s::CHIP_HEIGHT / 2.0) as u8;
     if shadow {
         p.add(s::SHADOW.as_shape(body, radius));
     }
-    let main = main_macro(state);
-    let active = main.is_some_and(|m| m.status == MacroStatus::Active);
+    let main = main_item(&layout.items);
+    let active = main.is_some_and(Item::active);
     p.rect_filled(body, radius, if active { s::ON } else { s::PANEL });
     let id = ui.make_persistent_id("macrohud-pastille");
-    drag_area(ui, body, id.with("glisser"), state.title(), actions);
+    drag_area(ui, body, id.with("glisser"), layout.state.title(), actions);
 
     let ink = if active { s::ON_INK } else { s::TEXT };
     let inner = body.shrink(1.0);
@@ -616,17 +949,29 @@ fn paint_chip(ui: &Ui, p: &Painter, rect: Rect, state: &HudState, shadow: bool, 
     let grip = Rect::from_min_size(pos2(inner.left() + 6.0, middle - 8.0), vec2(12.0, 16.0));
     icons::paint(p, Icon::Grip, grip, if active { s::ON_INK } else { s::GRIP });
     let mut x = grip.right() + 6.0;
-    if let Some(view) = main {
-        let (icon, word) = chip_state(view);
+    if let Some(item) = main {
+        let (icon, words) = chip_state(item);
         let icon_rect = Rect::from_center_size(pos2(x + 5.0, middle), vec2(10.0, 10.0));
         icons::paint(p, icon, icon_rect, if icon == Icon::Warning { s::WARN } else { ink });
         x += 10.0 + 5.0;
         let line_top = (middle - s::LINE_12 / 2.0).round();
-        x += text::draw(p, word, 12.0, s::BOLD, ink, x, line_top, s::LINE_12) + 2.0 + 6.0;
-        let look = if active { KeyLook::OnGreen } else { KeyLook::Normal };
-        let key_width = parts::keycap_width(&view.hotkey, look, KEY_MAX_IN_ROW);
-        let key = Rect::from_min_size(pos2(x, (middle - 12.0).round()), vec2(key_width, KEY_HEIGHT));
-        parts::keycap(p, key, &view.hotkey, look);
+        let words = text::line(p, &words, 12.0, s::BOLD, ink, chip_words_room(item));
+        x += text::put(p, &words, x, line_top, s::LINE_12) + 2.0 + 6.0;
+        if let Some(badge) = item.badge() {
+            let width = parts::pill_width(&badge.text);
+            let pill = Rect::from_min_size(
+                pos2(x, (middle - parts::PILL_HEIGHT / 2.0).round()),
+                vec2(width, parts::PILL_HEIGHT),
+            );
+            parts::pill(p, pill, pill_colour(badge.color), &badge.text);
+            x += width + 6.0;
+        }
+        if !item.hotkey().is_empty() {
+            let look = if active { KeyLook::OnGreen } else { KeyLook::Normal };
+            let key_width = parts::keycap_width(item.hotkey(), look, KEY_MAX_IN_ROW);
+            let key = Rect::from_min_size(pos2(x, (middle - 12.0).round()), vec2(key_width, KEY_HEIGHT));
+            parts::keycap(p, key, item.hotkey(), look);
+        }
     }
     let unfold = Rect::from_min_size(pos2(inner.right() - 4.0 - 24.0, (middle - 12.0).round()), vec2(24.0, 24.0));
     let look = IconButton {

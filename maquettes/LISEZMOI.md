@@ -112,3 +112,21 @@ sous chaque paire, puis le vrai HUD dans chaque situation du contrat où « Mult
 - `rendu-egui/situation-14` à `19` : les situations du contrat avec « Multi-clic » (200 % en plus).
 
 Les mêmes commandes que pour l'aperçu refont ces images et la page.
+
+## Macro externe dans le HUD (tâche P4.5)
+
+La ligne d'une macro externe est codée dans `src/hud/` d'après l'aperçu validé
+`macro-externe/apercu.html` (D-37). `macro-externe/resultat.html` (sans script, images intégrées)
+place chaque vue de l'aperçu à côté du vrai HUD et dit ce qui diffère.
+
+- `rendu-egui/externe-*@2x.png` : les vues de l'aperçu dessinées par le vrai HUD, avec ses textes
+  d'exemple (macro « Exemple »), puis trois cas que l'aperçu ne montre pas (souris sur le HUD, avant
+  le premier état, sans raccourci) ; `rendu-egui/situation-20` à `32` : les mêmes situations du
+  contrat, à 100 %.
+- `macro-externe/apercu-1@2x.png` à `apercu-8@2x.png` : les vues de l'aperçu photographiées à 200 %.
+
+```bash
+MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::                         # le vrai HUD
+node maquettes/outils/apercu-externe.mjs                                      # l'aperçu, photographié
+cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les pages
+```

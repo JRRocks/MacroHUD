@@ -10,7 +10,7 @@ use eframe::egui::{
 use super::icons::{self, Icon};
 use super::style as s;
 use super::text;
-use crate::contract::{ClickRate, MacroId, Message, MessageKind, MessageLevel, MouseButton};
+use crate::contract::{Alert, ClickRate, MacroId, Message, MessageKind, MessageLevel, MouseButton};
 
 /// Clickable area: hand cursor on hover, accessibility label, keyboard focus ring.
 pub fn clickable(ui: &Ui, rect: Rect, id: Id, label: &str, radius: u8) -> Response {
@@ -225,46 +225,72 @@ pub fn selector(ui: &Ui, p: &Painter, rect: Rect, id: Id, selected: MouseButton)
     chosen
 }
 
-// Speed of « Multi-clic »: slider from 1 to 15 (D-26, track A of maquettes/multi-clic) -----------
+// Sliders: whole numbers between bounds, by a step (D-26: track A of maquettes/multi-clic; the
+// settings of external macros, D-37) ---------------------------------------------------------------
 
 /// The slider's line: the bounds on each side, the track, the thumb.
 pub const SLIDER_HEIGHT: f32 = 24.0;
 const THUMB_RADIUS: f32 = 8.0;
+/// Notches are drawn only this far apart at least; closer, they would make a grey band (D-51).
+const NOTCH_MIN_GAP: f32 = 6.0;
 
-/// The slider's track in its `line`, and the centre of the thumb for each speed: the thumb stays
-/// inside the track at both ends, one notch per speed.
-fn slider_track(line: Rect) -> (Rect, impl Fn(ClickRate) -> f32) {
-    let low = text::width(&ClickRate::MIN.per_second().to_string(), 12.0, s::MEDIUM);
-    let high = text::width(&ClickRate::MAX.per_second().to_string(), 12.0, s::MEDIUM);
+/// A whole-number setting: its bounds and its step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Range {
+    pub min: i64,
+    pub max: i64,
+    pub step: i64,
+}
+
+impl Range {
+    /// The speed of « Multi-clic »: 1 to 15 clicks per second, by one.
+    pub fn click_rate() -> Self {
+        Range { min: ClickRate::MIN.per_second().into(), max: ClickRate::MAX.per_second().into(), step: 1 }
+    }
+
+    /// Every value the slider can take, smallest first.
+    fn values(self) -> impl Iterator<Item = i64> {
+        let step = self.step.max(1);
+        (0..=(self.max - self.min).max(0) / step).map(move |k| self.min + k * step)
+    }
+
+    /// `value` brought back between the bounds, on a step.
+    fn snap(self, value: i64) -> i64 {
+        let step = self.step.max(1);
+        let value = value.clamp(self.min, self.max);
+        (self.min + (value - self.min) / step * step).min(self.max)
+    }
+}
+
+/// The slider's track in its `line`, and the centre of the thumb for each value: the thumb stays
+/// inside the track at both ends.
+fn slider_track(line: Rect, range: Range) -> (Rect, impl Fn(i64) -> f32) {
+    let low = text::width(&range.min.to_string(), 12.0, s::MEDIUM);
+    let high = text::width(&range.max.to_string(), 12.0, s::MEDIUM);
     let middle = line.center().y;
     let track =
         Rect::from_x_y_ranges((line.left() + low + 8.0)..=(line.right() - high - 8.0), (middle - 3.0)..=(middle + 3.0));
-    let (min, max) = (ClickRate::MIN.per_second() as f32, ClickRate::MAX.per_second() as f32);
+    let (min, span) = (range.min as f32, (range.max - range.min).max(1) as f32);
     let (start, end) = (track.left() + THUMB_RADIUS, track.right() - THUMB_RADIUS);
-    (track, move |rate: ClickRate| (start + (end - start) * (rate.per_second() as f32 - min) / (max - min)).round())
+    (track, move |value: i64| (start + (end - start) * (value as f32 - min) / span).round())
 }
 
-/// Centre of the thumb for `rate`, in a slider drawn in `line`.
+/// Centre of the thumb for `value`, in a slider drawn in `line`.
 #[cfg(test)]
-pub fn slider_thumb(line: Rect, rate: ClickRate) -> eframe::egui::Pos2 {
-    let (_, x_of) = slider_track(line);
-    pos2(x_of(rate), line.center().y)
+pub fn slider_thumb(line: Rect, range: Range, value: i64) -> eframe::egui::Pos2 {
+    let (_, x_of) = slider_track(line, range);
+    pos2(x_of(value), line.center().y)
 }
 
-/// Every speed, slowest first.
-fn rates() -> impl Iterator<Item = ClickRate> {
-    (ClickRate::MIN.per_second()..=ClickRate::MAX.per_second()).map(ClickRate::new)
-}
-
-/// « 1 », the track with one notch per speed, « 15 »; the light part and the thumb show `rate`.
-/// A click or a drag on the track picks the nearest speed; with the keyboard focus, the arrows move
-/// it by one, Début and Fin to the bounds. Returns the speed chosen, if it changed.
-pub fn rate_slider(ui: &Ui, p: &Painter, line: Rect, id: Id, rate: ClickRate) -> Option<ClickRate> {
-    let (track, x_of) = slider_track(line);
+/// The lowest bound, the track, the highest bound; the light part and the thumb show `value`, a
+/// notch marks each value when they are far enough apart. A click or a drag on the track picks the
+/// nearest value; with the keyboard focus, the arrows move it by one step, Début and Fin to the
+/// bounds. `label` names it for screen readers. Returns the value chosen, if it changed.
+pub fn slider(ui: &Ui, p: &Painter, line: Rect, id: Id, value: i64, range: Range, label: &str) -> Option<i64> {
+    let (track, x_of) = slider_track(line, range);
     let middle = line.center().y;
-    let bounds = [ClickRate::MIN, ClickRate::MAX].map(|r| r.per_second().to_string());
-    text::draw(p, &bounds[0], 12.0, s::MEDIUM, s::TEXT_2, line.left(), line.top(), line.height());
-    let high = text::line(p, &bounds[1], 12.0, s::MEDIUM, s::TEXT_2, f32::INFINITY);
+    text::draw(p, &range.min.to_string(), 12.0, s::MEDIUM, s::TEXT_2, line.left(), line.top(), line.height());
+    let high = text::line(p, &range.max.to_string(), 12.0, s::MEDIUM, s::TEXT_2, f32::INFINITY);
     text::put(p, &high, line.right() - high.size().x, line.top(), line.height());
 
     let hit = Rect::from_x_y_ranges(track.x_range(), line.y_range());
@@ -273,36 +299,38 @@ pub fn rate_slider(ui: &Ui, p: &Painter, line: Rect, id: Id, rate: ClickRate) ->
     if hot {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
-    let value = f64::from(rate.per_second());
-    response.widget_info(move || WidgetInfo::slider(true, value, "Rapidité, en clics par seconde"));
+    let (shown, label) = (value as f64, label.to_owned());
+    response.widget_info(move || WidgetInfo::slider(true, shown, &label));
     let mut chosen = None;
     if (response.clicked() || response.dragged())
         && let Some(pointer) = response.interact_pointer_pos()
     {
-        chosen = rates().min_by(|&a, &b| (x_of(a) - pointer.x).abs().total_cmp(&(x_of(b) - pointer.x).abs()));
+        chosen = range.values().min_by(|&a, &b| (x_of(a) - pointer.x).abs().total_cmp(&(x_of(b) - pointer.x).abs()));
     }
     if response.has_focus() {
-        // The arrows change the speed instead of moving the focus.
+        // The arrows change the value instead of moving the focus.
         let filter = EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
         ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
-        let step = |key: Key| ui.input(|i| i.key_pressed(key));
-        let current = rate.per_second();
-        if step(Key::ArrowLeft) || step(Key::ArrowDown) {
-            chosen = Some(ClickRate::new(current.saturating_sub(1)));
-        } else if step(Key::ArrowRight) || step(Key::ArrowUp) {
-            chosen = Some(ClickRate::new(current + 1));
-        } else if step(Key::Home) {
-            chosen = Some(ClickRate::MIN);
-        } else if step(Key::End) {
-            chosen = Some(ClickRate::MAX);
+        let pressed = |key: Key| ui.input(|i| i.key_pressed(key));
+        if pressed(Key::ArrowLeft) || pressed(Key::ArrowDown) {
+            chosen = Some(range.snap(value - range.step.max(1)));
+        } else if pressed(Key::ArrowRight) || pressed(Key::ArrowUp) {
+            chosen = Some(range.snap(value + range.step.max(1)));
+        } else if pressed(Key::Home) {
+            chosen = Some(range.min);
+        } else if pressed(Key::End) {
+            chosen = Some(range.snap(range.max));
         }
     }
 
     p.rect_filled(track, 3, s::CONTROL);
-    let x = x_of(rate);
+    let x = x_of(range.snap(value));
     p.rect_filled(Rect::from_x_y_ranges(track.left()..=x, track.y_range()), 3, s::KEY);
-    for notch in rates() {
-        p.vline(x_of(notch) + 0.5, (middle + 6.0)..=(middle + 9.0), Stroke::new(1.0, s::STRIPE));
+    let notches: Vec<f32> = range.values().map(&x_of).collect();
+    if notches.windows(2).all(|pair| pair[1] - pair[0] >= NOTCH_MIN_GAP) {
+        for notch in notches {
+            p.vline(notch + 0.5, (middle + 6.0)..=(middle + 9.0), Stroke::new(1.0, s::STRIPE));
+        }
     }
     let thumb = pos2(x, middle);
     if hot {
@@ -312,7 +340,50 @@ pub fn rate_slider(ui: &Ui, p: &Painter, line: Rect, id: Id, rate: ClickRate) ->
     if response.has_focus() {
         p.circle_stroke(thumb, THUMB_RADIUS + 3.0, Stroke::new(2.0, s::FOCUS));
     }
-    chosen.filter(|&new| new != rate)
+    chosen.filter(|&new| new != value)
+}
+
+/// The speed of « Multi-clic » (D-26): `slider` from 1 to 15 clicks per second.
+pub fn rate_slider(ui: &Ui, p: &Painter, line: Rect, id: Id, rate: ClickRate) -> Option<ClickRate> {
+    let value = i64::from(rate.per_second());
+    slider(ui, p, line, id, value, Range::click_rate(), "Rapidité, en clics par seconde")
+        .map(|chosen| ClickRate::new(u32::try_from(chosen).unwrap_or(0)))
+}
+
+// Step pill of an external macro (D-37) ------------------------------------------------------------
+
+/// The colours a script may give its step pill (`docs/MACROS-EXTERNES.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PillColour {
+    Amber,
+    Green,
+    Blue,
+    Grey,
+}
+
+pub const PILL_HEIGHT: f32 = 20.0;
+const PILL_TEXT: f32 = 12.0;
+/// Widest pill; a longer text is cut with « … ».
+const PILL_MAX: f32 = 96.0;
+
+/// Width of the pill showing `label`.
+pub fn pill_width(label: &str) -> f32 {
+    (8.0 + text::width(label, PILL_TEXT, s::EXTRABOLD) + 8.0).ceil().min(PILL_MAX)
+}
+
+/// The step pill: a capsule in the HUD's colours (amber = WARN, green = the green of « ■ » on dark,
+/// blue = INFO, grey = secondary text on dark), its text in extra-bold.
+pub fn pill(p: &Painter, rect: Rect, colour: PillColour, label: &str) {
+    let (fill, ink) = match colour {
+        PillColour::Amber => (s::WARN, s::SIGN_INK),
+        PillColour::Green => (s::ON_INK, s::ON),
+        PillColour::Blue => (s::INFO, s::INFO_BG),
+        PillColour::Grey => (s::ON_INK, s::TEXT_2),
+    };
+    let radius = (rect.height() / 2.0) as u8;
+    p.rect_filled(rect, radius, fill);
+    let galley = text::line(p, label, PILL_TEXT, s::EXTRABOLD, ink, rect.width() - 16.0);
+    text::centred(p, &galley, rect.center().x, rect.top(), rect.height());
 }
 
 // Shortcut capture -----------------------------------------------------------------------------
@@ -452,4 +523,55 @@ pub fn message(ui: &Ui, p: &Painter, rect: Rect, id: Id, message: &MessageBox) -
     p.rect(button, 6, fill, Stroke::new(1.0, look.edge), StrokeKind::Inside);
     text::draw(p, RETRY_LABEL, 12.0, s::SEMIBOLD, look.title, button.left() + 10.0, button.top(), 28.0);
     response.clicked()
+}
+
+// Amber box of an external macro (D-37) ----------------------------------------------------------
+
+/// Side of the warning sign at the start of the box.
+const ALERT_ICON: f32 = 12.0;
+
+/// The amber box under the line of an external macro, as on its validated preview (D-57): « ▲ Title.
+/// Text » in one paragraph, the title in bold, in the colours of « Raccourci refusé ».
+pub struct AlertBox {
+    text: text::Paragraph,
+}
+
+impl AlertBox {
+    /// The box for `alert`, `width` wide: 1 px border, 10 px padding on each side.
+    pub fn new(alert: &Alert, width: f32) -> Self {
+        let title = text::with_sign_room(alert.title.trim());
+        let rest = text::with_sign_room(&format!(" {}", alert.text.trim()));
+        let sections = [(title.as_str(), s::BOLD, s::WARN_TITLE), (rest.as_str(), s::REGULAR, s::WARN_TEXT)];
+        AlertBox { text: text::Paragraph::new(&sections, 12.0, width - 22.0, ALERT_ICON + 4.0) }
+    }
+
+    pub fn height(&self) -> f32 {
+        1.0 + 8.0 + self.text.rows() as f32 * s::LINE_MESSAGE + 8.0 + 1.0
+    }
+
+    /// The text of each row, for tests.
+    #[cfg(test)]
+    pub fn rows(&self) -> Vec<String> {
+        self.text.row_texts()
+    }
+}
+
+/// Paints the amber box in `rect`.
+pub fn alert(p: &Painter, rect: Rect, alert: &AlertBox) {
+    p.rect(rect, 8, s::WARN_BG, Stroke::new(1.0, s::WARN), StrokeKind::Inside);
+    let (left, top) = (rect.left() + 11.0, rect.top() + 9.0);
+    let sign =
+        Rect::from_min_size(pos2(left, top + (s::LINE_MESSAGE - ALERT_ICON) / 2.0), vec2(ALERT_ICON, ALERT_ICON));
+    icons::paint(p, Icon::Warning, sign, s::WARN);
+    let signs = alert.text.paint(p, left, top, s::LINE_MESSAGE);
+    paint_signs(p, &signs, s::WARN_TEXT);
+}
+
+/// The HUD's signs inside a text from outside (« ▶ », « ■ », see `text::with_sign_room`): its
+/// icons, 10 px, in the colour of the text.
+pub fn paint_signs(p: &Painter, signs: &[(char, eframe::egui::Pos2)], color: Color32) {
+    for &(sign, centre) in signs {
+        let icon = if sign == '■' { Icon::Stop } else { Icon::Play };
+        icons::paint(p, icon, Rect::from_center_size(centre, vec2(10.0, 10.0)), color);
+    }
 }

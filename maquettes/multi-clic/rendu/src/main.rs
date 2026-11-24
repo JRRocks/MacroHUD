@@ -109,6 +109,13 @@ fn main() {
     } else {
         println!("resultat.html non refaite : rendus du vrai HUD absents (voir maquettes/LISEZMOI.md)");
     }
+    // The external macro (P4.5): the preview photographed, beside the real HUD's renders.
+    let external = ["../rendu-egui/externe-1-reglages@2x.png", "../macro-externe/apercu-1@2x.png"];
+    if external.iter().all(|path| folder.join(path).exists()) {
+        page::write(&folder, "resultat-externe.modele.html", "../macro-externe/resultat.html");
+    } else {
+        println!("macro-externe/resultat.html non refaite : images absentes (voir maquettes/LISEZMOI.md)");
+    }
 }
 
 /// Every state line of « Multi-clic » fits its line, for each button and each speed: none is cut.

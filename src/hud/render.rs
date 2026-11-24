@@ -20,10 +20,11 @@ use eframe::egui::{
 };
 
 use super::icons::Icon;
+use super::parts::KeyLook;
 use super::{paint, parts, set_open_macro, style, text, window_size};
 use crate::contract::{
-    ClickRate, HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, Message, MessageLevel, MouseButton,
-    samples,
+    BadgeColor, ClickRate, ExternalLine, HudAction, HudState, MacroId, MacroOptions, MacroStatus, MacroView, Message,
+    MessageLevel, MouseButton, samples,
 };
 
 // Rasteriser ---------------------------------------------------------------------------------
@@ -432,7 +433,7 @@ fn slider_line() -> Rect {
 /// HUD: settings open with the macro stopped; active; active, the mouse on the thumb (clicks wait).
 /// The last one has the pointer of the preview, 3 px right and down of the thumb's centre.
 fn multi_click_views() -> Vec<(View, Option<Pos2>)> {
-    let thumb = parts::slider_thumb(slider_line(), ClickRate::DEFAULT);
+    let thumb = parts::slider_thumb(slider_line(), parts::Range::click_rate(), 10);
     let view = |key, state| View { key, state, open: Some(MULTI) };
     vec![
         (view("multi-1-reglages", two_macros(MacroStatus::Stopped, false)), None),
@@ -469,7 +470,10 @@ fn every_situation_has_a_sensible_size() {
         set_open_macro(None);
         let size = window_size(&state);
         if state.collapsed {
-            let width = if state.message.is_some() { 290.0 } else { 160.0 };
+            // The pill of MacroHUD's macros is small; that of an external macro carries its state
+            // and step pill, never wider than the HUD (D-54).
+            let external = state.external_macros.iter().any(|m| m.status == MacroStatus::Active);
+            let width = if state.message.is_some() || external { 290.0 } else { 160.0 };
             assert!(size.x <= width + 3.0, "{name} : {size:?}");
         } else {
             assert_eq!(size.x, 290.0, "{name}");
@@ -779,7 +783,7 @@ fn multi_click_settings_have_the_preview_size() {
 #[test]
 fn the_speed_slider_asks_for_the_new_speed() {
     let line = slider_line();
-    let at = |rate: u32| parts::slider_thumb(line, ClickRate::new(rate));
+    let at = |rate: u32| parts::slider_thumb(line, parts::Range::click_rate(), rate.into());
     let set = |rate: u32| {
         HudAction::SetOptions(MULTI, MacroOptions::MultiClick { button: MouseButton::Left, rate: ClickRate::new(rate) })
     };
@@ -1008,14 +1012,15 @@ fn renders_multi_click() {
             _ => assert_eq!(gap, style::TEXT_2, "le carré « Arrêtée »"),
         }
         // The thumb, on 10 clicks per second.
-        let thumb = parts::slider_thumb(slider_line(), ClickRate::DEFAULT);
+        let thumb = parts::slider_thumb(slider_line(), parts::Range::click_rate(), 10);
         assert_eq!(image.pixel(side + thumb.x as usize - 3, top + thumb.y as usize - 3), style::KEY, "{}", view.key);
     }
     if !big {
         return;
     }
     for (number, (name, state)) in samples().into_iter().enumerate() {
-        if state.macros.iter().any(|m| m.id == MULTI) {
+        // The situations of « Multi-clic » (those with an external macro have their views below).
+        if state.macros.iter().any(|m| m.id == MULTI) && state.external_macros.is_empty() {
             let view = View { key: name, state, open: None };
             render_alone(&mut renderer, &view, 2.0).save_png(&dir.join(format!("situation-{:02}@2x.png", number + 1)));
         }
@@ -1102,4 +1107,172 @@ fn comparison_sheets() {
     let image = sheet(&mut renderer, "+", "Toutes les situations du contrat", idea, &tiles);
     image.save_png(&dir.join("situations-egui.png"));
     set_open_macro(None);
+}
+
+// External macros (D-32, D-37) -----------------------------------------------------------------
+
+const EXAMPLE: MacroId = MacroId("exemple");
+
+/// The views of the external macro's preview (`maquettes/macro-externe/apercu.html`, D-37), drawn
+/// by the real HUD with the preview's example texts (situations of the contract), then the cases
+/// the preview does not draw.
+fn external_views() -> Vec<View> {
+    let view = |key, name, open| View { key, state: sample(name), open };
+    vec![
+        view("externe-1-reglages", "trois macros, macro externe arrêtée", Some(EXAMPLE)),
+        view("externe-2-active", "macro externe active, pastille ambre", None),
+        view("externe-3-pastille-verte", "macro externe active, pastille verte", None),
+        view("externe-3-pastille-grise", "macro externe active, pastille grise", None),
+        view("externe-3-pastille-bleue", "macro externe active, pastille bleue", None),
+        view("externe-4-en-attente", "macro externe en attente", None),
+        view("externe-5-terminee", "macro externe terminée", None),
+        view("externe-6-replie", "replié, macro externe active", None),
+        view("externe-7-alerte", "macro externe, alerte de son script", None),
+        view("externe-8-ne-demarre-pas", "macro externe qui ne peut pas démarrer", None),
+        view("externe-souris-sur-le-hud", "macro externe suspendue (souris sur le HUD)", None),
+        view("externe-avant-premier-etat", "macro externe active, avant son premier état", None),
+        view("externe-sans-raccourci", "macro externe sans raccourci ni réglage", Some(EXAMPLE)),
+    ]
+}
+
+/// The line of the external macro: the third, under the title bar and the two lines of MacroHUD.
+const EXTERNAL_ROW_TOP: f32 = 2.0 + 32.0 + 2.0 * 50.0;
+
+/// The external macro's line reads as on its preview.
+#[test]
+fn external_lines_read_as_the_preview() {
+    let line = |name: &str| super::external_state_line(&sample(name).external_macros[0]);
+    let words = |name: &str| line(name).1;
+    assert_eq!(
+        line("trois macros, macro externe arrêtée"),
+        (Some(Icon::Stop), "Arrêtée · limite 100 clics".into(), style::REGULAR)
+    );
+    assert_eq!(
+        line("macro externe active, pastille ambre"),
+        (Some(Icon::Dot), "Active · 12/100".into(), style::SEMIBOLD)
+    );
+    assert_eq!(words("macro externe active, avant son premier état"), "Active");
+    assert_eq!(
+        line("macro externe en attente"),
+        (Some(Icon::Pause), "En pause · attend sa fenêtre".into(), style::SEMIBOLD)
+    );
+    assert_eq!(line("macro externe suspendue (souris sur le HUD)").1, "En pause · souris ici");
+    assert_eq!(line("macro externe terminée"), (Some(Icon::Check), "Terminée · 100/100 clics".into(), style::REGULAR));
+    assert_eq!(words("macro externe qui ne peut pas démarrer"), "Arrêtée");
+    // The pill: the active macro's, the words of its state on it, never wider than the HUD (D-54).
+    let folded = sample("replié, macro externe active");
+    assert_eq!(super::chip_state(super::main_item(&super::items(&folded)).expect("macro")).1, "Active 12/100");
+    set_open_macro(None);
+    assert!(window_size(&folded).x <= 290.0, "{:?}", window_size(&folded));
+}
+
+/// Settings of the external macro: its slider with the value above it, the hotkey, the help line
+/// on three lines (the HUD is narrower than the preview's drawing); the HUD grows by one line per external macro, keeping its width.
+#[test]
+fn external_settings_have_their_size() {
+    let stopped = sample("trois macros, macro externe arrêtée");
+    assert_eq!(super::info_lines(&stopped.external_macros[0]).len(), 3);
+    set_open_macro(Some(EXAMPLE));
+    let settings = 8.0 + (15.0 + 4.0 + 24.0 + 10.0) + 26.0 + (10.0 + 3.0 * 16.0) + 10.0 + 1.0;
+    assert_eq!(window_size(&stopped), vec2(290.0, 2.0 + 32.0 + 3.0 * 50.0 + settings + 2.0));
+    set_open_macro(None);
+    assert_eq!(window_size(&stopped), vec2(290.0, 2.0 + 32.0 + 3.0 * 50.0 + 2.0));
+    // The amber box: under the line, the whole title then the text, as one paragraph.
+    let alert = sample("macro externe, alerte de son script");
+    let rows = parts::AlertBox::new(alert.external_macros[0].alert.as_ref().expect("encadré"), 266.0).rows();
+    assert_eq!(
+        rows.join(" "),
+        "La fenêtre visée est en plein écran. Passe-la en fenêtre : en plein écran, la macro ne voit pas l'écran."
+    );
+    assert!(rows.len() >= 2, "{rows:?}");
+}
+
+/// The sliders of an external macro ask for the value at once, on its steps, stopped or running
+/// (like the speed of « Multi-clic », D-27); nothing when the value does not change.
+#[test]
+fn external_sliders_ask_for_their_value() {
+    let line =
+        Rect::from_min_size(pos2(14.0, EXTERNAL_ROW_TOP + 50.0 + 8.0 + 15.0 + 4.0), vec2(266.0, parts::SLIDER_HEIGHT));
+    let range = parts::Range { min: 10, max: 500, step: 10 };
+    let at = |value: i64| parts::slider_thumb(line, range, value);
+    let set = |value: i64| HudAction::SetSetting(EXAMPLE, "limite".into(), value);
+    for active in [false, true] {
+        let mut state = sample("trois macros, macro externe arrêtée");
+        if active {
+            state.external_macros[0].status = MacroStatus::Active;
+            state.external_macros[0].line = ExternalLine::Active(Some("12/100".into()));
+        }
+        let view = view_of(state, Some(EXAMPLE));
+        assert_eq!(click(&view, at(250)), vec![set(250)], "cran 250");
+        assert_eq!(click(&view, at(250) + vec2(2.0, 4.0)), vec![set(250)], "près du cran 250");
+        assert_eq!(click(&view, at(500)), vec![set(500)], "fin de la piste");
+        assert!(click(&view, at(100)).is_empty(), "la valeur ne change pas");
+        let dragged = gesture(&view, at(100), at(300));
+        assert_eq!(dragged.last(), Some(&set(300)), "{dragged:?}");
+    }
+    set_open_macro(None);
+}
+
+/// The views of the preview drawn by the real HUD, with pixels that tell them apart; at 200 % in
+/// `maquettes/rendu-egui/` with `MACROHUD_RENDUS`.
+#[test]
+fn renders_external_macros() {
+    let mut renderer = Renderer::new();
+    let dir = output_dir();
+    let [side, top, _] = style::SHADOW_MARGIN.map(|v| v as usize);
+    let big = std::env::var_os("MACROHUD_RENDUS").is_some();
+    for view in external_views() {
+        let image = render_alone(&mut renderer, &view, 1.0);
+        if big {
+            render_alone(&mut renderer, &view, 2.0).save_png(&dir.join(format!("{}@2x.png", view.key)));
+        }
+        if view.state.collapsed {
+            continue;
+        }
+        // The left stripe of the external macro's line: blue once « Terminée », dark green active.
+        let stripe = image.pixel(side + 3, top + EXTERNAL_ROW_TOP as usize + 20);
+        match view.key {
+            "externe-5-terminee" => assert_eq!(stripe, style::INFO, "liseré bleu"),
+            "externe-1-reglages" | "externe-7-alerte" | "externe-8-ne-demarre-pas" | "externe-sans-raccourci" => {
+                assert_eq!(stripe, style::STRIPE, "{}", view.key);
+            }
+            _ => assert_eq!(stripe, style::ON_INK, "{}", view.key),
+        }
+        // The step pill, between the state and the key: its colour, left of its text.
+        let external = &view.state.external_macros[0];
+        if let Some(badge) = external.badge.as_ref().filter(|_| external.status == MacroStatus::Active) {
+            let key = parts::keycap_width("F10", KeyLook::OnGreen, 84.0);
+            let pill_left = 2.0 + 286.0 - 6.0 - 24.0 - 8.0 - key - 8.0 - parts::pill_width(&badge.text);
+            let middle = EXTERNAL_ROW_TOP + 49.0 / 2.0;
+            let fill = image.pixel(side + pill_left as usize + 4, top + middle as usize);
+            let expected = match badge.color {
+                BadgeColor::Amber => style::WARN,
+                BadgeColor::Blue => style::INFO,
+                BadgeColor::Green | BadgeColor::Grey => style::ON_INK,
+            };
+            assert_eq!(fill, expected, "{}", view.key);
+        }
+    }
+    set_open_macro(None);
+}
+
+/// « ▶ » and « ■ », which Inter lacks, keep their room in a wrapped text and come back as the
+/// HUD's icons (D-56); the rows of an amber box hold the whole title and text.
+#[test]
+fn signs_keep_their_room() {
+    let lines = text::wrap(&text::with_sign_room("F10 ou ▶ l'arrêtent, ■ aussi."), 12.0, style::REGULAR, 400.0);
+    assert_eq!(lines.len(), 1);
+    let mut renderer = Renderer::new();
+    let mut spots = Vec::new();
+    renderer.pass(vec2(400.0, 100.0), Vec::new(), &mut |ui| {
+        let galley = text::line(ui.painter(), &lines[0], 12.0, style::REGULAR, Color32::WHITE, 400.0);
+        spots = text::sign_spots(&galley);
+    });
+    assert_eq!(spots.iter().map(|(sign, _)| *sign).collect::<String>(), "▶■");
+    let before = text::width("F10 ou ", 12.0, style::REGULAR);
+    assert!((spots[0].1 - before - 4.7).abs() < 2.0, "{spots:?}");
+    // Cut where it may be: the sign stays whole at the end of a row.
+    let narrow = text::wrap(&text::with_sign_room("Arrête avec ▶ puis relance."), 12.0, style::REGULAR, 80.0);
+    assert!(narrow.iter().any(|row| row.contains('\u{A0}')), "{narrow:?}");
+    assert_eq!(narrow.concat().matches('\u{A0}').count(), 3, "{narrow:?}");
 }
