@@ -21,6 +21,48 @@ Gabarit :
 
 ---
 
+## 2026-11-24 · Les branches réunies : MacroHUD 0.1.43, trois macros dans un seul HUD
+
+- **Session** : maître
+- **Branche et commit** : `integration/macros-externes`, partie de `main` `d6e09bb` : fusion de
+  `claude/gifted-hypatia-g84kg1` (`a81cb50`, « programmation ») puis de
+  `claude/gifted-turing-0izrcw` (`677918e`, « visuel ») ; CI n° 43 sur `01edc67` ; puis ce commit
+  `[skip ci]`. `main` n'a pas bougé.
+- **Objectif** : demande de l'utilisateur : l'exécutable qui contient ses macros et sa macro externe,
+  lancé sur le PC, et son chemin.
+- **Réalisé** :
+  - Fusions : conflits dans `docs/` seulement. Journal : les entrées des trois sessions gardées, la
+    plus récente en haut ; décisions : D-40 à D-47 puis D-50 à D-57 ; plan : la ligne P4.4 de
+    « programmation ».
+  - `MacroHUD.0.1.43.exe` (artefact de la CI n° 43) posé dans le dossier d'applications de
+    l'utilisateur, le raccourci « MacroHUD » dirigé dessus ; 0.1.33 mis à la corbeille (toujours
+    sur les Releases). La macro externe de l'utilisateur déclarée sur le PC (hors du dépôt).
+  - Lancé : `macrohud.log` : « déclaration lue », raccourcis F8, F9 et F10 enregistrés ; capture
+    du HUD : les trois lignes, la macro externe « ■ Arrêtée » avec sa touche F10.
+- **Décisions** : aucune nouvelle. Choix du développeur : la version d'essai remplace 0.1.33 dans le
+  dossier d'applications (l'utilisateur cherchait un seul exécutable) ; le raccourci de la macro
+  externe d'avant y reste jusqu'au test (P4.6).
+- **Vérifications** :
+  - CI n° 43 verte : Linux 190 tests, Windows 197 tests ; `MacroHUD.0.1.43.exe --version` répond
+    « MacroHUD 0.1.43 ».
+  - Sur le PC : l'icône intégrée à l'exécutable est le logo (D-33), vue par Windows en 32 px.
+  - Contrôle « rien de privé » avant le push de la branche et avant ce commit : « Rien à signaler ».
+- **Non vérifié sur le PC** : R35 à R44 ; la macro externe lancée par sa touche ; le logo dans la
+  barre des tâches.
+- **Problèmes et dette** :
+  - Le bureau Claude est une application en paquet (MSIX) : ce que ses sessions écrivent dans
+    `%APPDATA%` va dans son dossier à lui (`%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\`).
+    MacroHUD lancé par l'utilisateur, ou par une session via `explorer.exe`, lit le vrai
+    `%APPDATA%\MacroHUD` : une déclaration posée par une session ne s'y voit pas. Parade : lire et
+    écrire par `\\localhost\C$\Users\<utilisateur>\AppData\Roaming\MacroHUD\`, et lancer MacroHUD
+    par `explorer.exe`. Les journaux de MacroHUD que voit une session sont ceux du dossier du paquet.
+  - Texte d'état coupé : sur le PC (écran à 100 %), la ligne d'une macro externe coupe un texte
+    d'état plus long que « Arrêtée · limite 100 clics » (« Arrêtée · limite 100 pri… »), alors que
+    l'aperçu validé le montrait entier. Choix demandé à l'utilisateur : textes plus courts dans sa
+    déclaration et son script, ou ligne retouchée par la session « visuel ».
+- **Prochaine étape** : réponse de l'utilisateur sur le texte coupé ; test sur le PC (P4.6, halte des
+  autres sessions, D-14) ; puis `main` avancé sur `integration/macros-externes` et livraison.
+
 ## 2026-11-23 · Macros externes : boutons relâchés aussi après une sortie en erreur (P4.4, suite)
 
 - **Session** : programmation

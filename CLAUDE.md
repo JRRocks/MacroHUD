@@ -45,6 +45,9 @@ cargo run                 # le HUD sous Linux, souris et clavier simulés (pour 
   `src/hud/mod.rs`). Ce qu'il reçoit et demande : `src/contract.rs`, traduction de `docs/CONTRAT-HUD.md`.
 - Sur le PC, `%APPDATA%\MacroHUD\` : `reglages.json`, `macrohud.log` (journal d'exécution ; celui
   du lancement précédent : `macrohud.precedent.log`), `plantages\` (rapports de plantage datés).
+- Session du bureau Claude sur le PC : son `%APPDATA%` n'est pas le vrai (application en paquet).
+  Lire et écrire par `\\localhost\C$\Users\<utilisateur>\AppData\Roaming\MacroHUD\`, lancer
+  MacroHUD par `explorer.exe` (journal du 2026-11-24).
 
 ## Livraison
 
