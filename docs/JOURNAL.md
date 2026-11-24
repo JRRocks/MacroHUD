@@ -21,6 +21,32 @@ Gabarit :
 
 ---
 
+## 2026-11-24 · Ligne d'une macro externe : textes coupés, mesurés
+
+- **Session** : maître
+- **Branche et commit** : `integration/macros-externes`, ce commit `[skip ci]`.
+- **Objectif** : choix de l'utilisateur pour le texte coupé (entrée suivante) : raccourcir les textes
+  de sa macro externe plutôt que d'élargir la ligne.
+- **Réalisé** :
+  - Textes de sa déclaration et de son script raccourcis (hors du dépôt) ; MacroHUD relancé :
+    « ■ Arrêtée · limite 100 » s'affiche entier.
+  - Mesure des textes d'état avec la police du HUD (Inter, par GDI ; le poids 600 n'y est pas
+    disponible, mesures en 400), calée sur la coupure vue sur le PC et sur les rendus egui de
+    `maquettes/rendu-egui/` : ligne à touche F10, sans pastille, l'état tient entre 11,46 et
+    11,74 em (largeurs du poids 400). « Terminée · 100/100 clics » (11,46) y tient tout juste ;
+    « En pause · attend sa fenêtre » est coupé (rendu `externe-4-en-attente`).
+- **Décisions** : aucune nouvelle dans le dépôt.
+- **Non vérifié sur le PC** : inchangé (entrée suivante).
+- **Problèmes et dette** :
+  - D-55 : avec une pastille, l'état « Active · 12/100 » d'une macro externe est coupé quoi qu'il
+    dise (rendu `externe-3-pastille-grise` : « Active · … » avec « Pause 8 s ») ; l'aperçu validé,
+    dessiné sur 316 px, le montrait entier. Proposé à l'utilisateur : un aperçu où la pastille monte
+    sur la ligne du nom (la piste que D-55 laisse à valider).
+  - Dans le dossier d'applications de l'utilisateur, il ne reste que l'exécutable : raccourci et
+    icône du logo (P4.1) retirés le 2026-11-24, pas par une session. À la livraison : poser
+    l'exécutable seul et retirer l'ancien.
+- **Prochaine étape** : réponse de l'utilisateur sur la pastille ; P4.6.
+
 ## 2026-11-24 · Les branches réunies : MacroHUD 0.1.43, trois macros dans un seul HUD
 
 - **Session** : maître
