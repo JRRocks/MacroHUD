@@ -21,6 +21,55 @@ Gabarit :
 
 ---
 
+## 2026-11-25 · La pastille d'une macro externe monte sur la ligne du nom
+
+- **Session** : visuel
+- **Agent** : Claude
+- **Branche et commit** : `claude/gifted-turing-0izrcw`, avancée rapide sur
+  `integration/macros-externes` (`0fbdf43`), puis le commit « P4.7 » et le commit de fin
+  `[ETAPE-FINIE visuel-pastille-nom]`.
+- **Objectif** : P4.7, coder la variante A validée (D-38, D-39) : la pastille sur la ligne du nom,
+  contre la touche, pour que le texte d'état ne soit plus coupé.
+- **Réalisé** :
+  - `src/hud/mod.rs` : la place des éléments d'une ligne est calculée à un seul endroit
+    (`row_geometry`, partagée par le dessin et les tests). Avec une pastille : 20 px de haut, de 6 à
+    26 px du haut de la ligne (centrée sur la ligne du nom), bord droit à 8 px de la touche ; le nom
+    s'arrête 8 px avant elle, coupé (…) ; le texte d'état va jusqu'à 8 px de la touche. Sans touche,
+    la flèche des réglages en tient lieu (D-58). Sans pastille, la capsule repliée et les macros de
+    MacroHUD : rien ne change.
+  - Rendus refaits dans `maquettes/rendu-egui/` : `externe-2-active`, `externe-3-pastille-*`,
+    `externe-souris-sur-le-hud` (à 200 %), `situation-21` à `24` et `27`, la planche des situations ;
+    nouveaux : `externe-pastille-ligne-du-nom@2x.png` (la ligne découpée dans quatre rendus, une par
+    pastille) et `externe-pastille-nom-long@2x.png`.
+  - `maquettes/macro-externe/pastille-ligne-du-nom-resultat.html` : la variante A (photographiée par
+    `maquettes/outils/pastille-ligne-du-nom.mjs`) à côté du vrai HUD, avec ce qui diffère ; la page
+    de P4.5 (`resultat.html`) dit maintenant que la pastille est sur la ligne du nom.
+- **Décisions** : D-58 (développeur).
+- **Vérifications** :
+  - `cargo fmt --check` ; `cargo clippy --all-targets -- -D warnings` sous Linux et avec
+    `--target x86_64-pc-windows-msvc` ; `cargo test` : tout passe (résultats dans le commit de fin
+    avec la CI).
+  - Test `the_pill_sits_on_the_name_line` : avec F10 et chacune des pastilles d'exemple (Attente,
+    Clic !, Pause 8 s, Relance), « Active · 12/100 » ou « 13/100 » n'est pas coupé, la pastille est
+    à 8 px de la touche, de 6 à 26 px, au-dessus du texte d'état, de largeur inchangée ; « Exemple
+    au nom très long » est coupé avant elle ; sans pastille, le nom et le texte gardent la même
+    place ; la capsule repliée garde 265 px. Le contrôle au pixel des rendus vérifie la pastille en
+    haut et plus rien à son ancienne place.
+  - Rendus d'avant et d'après comparés : seuls changent ceux qui ont une pastille ; trois vues sans
+    pastille ne diffèrent que d'un niveau sur 255 sur 1 à 7 pixels (ordre de l'atlas des glyphes,
+    partagé d'une vue à l'autre) : remises telles quelles. La capsule repliée est identique.
+  - Mesuré à 200 % sur « Attente », variante A contre vrai HUD : touche au même pixel, bord droit de
+    la pastille au même pixel (8 px avant la touche). Deux écarts d'un pixel : la pastille du dessin
+    HTML est 1 px plus bas (7 à 27 px) que les chiffres de D-39, que suit le vrai HUD (6 à 26 px) ;
+    elle y fait 60 px de large contre 61 (le texte mesuré par chaque police). Aucun écart imposé par
+    une contrainte technique.
+  - Pages dans Chromium à 400 et 1280 px : aucun défilement horizontal, aucun script, aucune requête
+    vers l'extérieur.
+- **Non vérifié sur le PC** : la vraie macro externe de l'utilisateur avec sa pastille, sur la ligne
+  du nom (passage suivant).
+- **Problèmes et dette** : aucun.
+- **Prochaine étape** : relecture et fusion par la session maître.
+
 ## 2026-11-25 · Pastille sur la ligne du nom : variante A choisie
 
 - **Session** : maître

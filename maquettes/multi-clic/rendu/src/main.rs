@@ -116,6 +116,13 @@ fn main() {
     } else {
         println!("macro-externe/resultat.html non refaite : images absentes (voir maquettes/LISEZMOI.md)");
     }
+    // The step pill on the name line (P4.7): variant A photographed, beside the real HUD's lines.
+    let pill = ["../rendu-egui/externe-pastille-ligne-du-nom@2x.png", "../macro-externe/pastille-a-1@2x.png"];
+    if pill.iter().all(|path| folder.join(path).exists()) {
+        page::write(&folder, "pastille-resultat.modele.html", "../macro-externe/pastille-ligne-du-nom-resultat.html");
+    } else {
+        println!("pastille-ligne-du-nom-resultat.html non refaite : images absentes (voir maquettes/LISEZMOI.md)");
+    }
 }
 
 /// Every state line of « Multi-clic » fits its line, for each button and each speed: none is cut.

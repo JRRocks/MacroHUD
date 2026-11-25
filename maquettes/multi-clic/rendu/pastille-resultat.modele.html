@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MacroHUD · pastille sur la ligne du nom</title>
+<style>
+*{box-sizing:border-box}
+html{background:#e9ecf0}
+body{margin:0;color:#1c1d20;font:16px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:28px;line-height:1.2;margin:0 0 10px;letter-spacing:-.01em}
+h2{font-size:22px;line-height:1.25;margin:0 0 8px}
+h3{font-size:17px;margin:20px 0 6px}
+p{margin:0 0 10px}
+.intro{max-width:800px;color:#3f4147}
+section{background:#f8f9fb;border:1px solid #d5dae1;border-radius:14px;padding:18px 16px 20px;margin-top:22px}
+.bilan{margin:12px 0 0;padding:12px 14px;border-left:4px solid #1f9b57;background:#e3f2e8;border-radius:0 8px 8px 0}
+ul.liste{margin:6px 0 0;padding-left:20px;max-width:900px}
+ul.liste li{margin-top:4px}
+.paire{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;max-width:760px;align-items:start}
+.vues{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px;margin-top:10px}
+figure{margin:0}
+.tuile{display:flex;justify-content:center;padding:10px 6px;border-radius:10px;background:#3d6f99}
+.tuile img{display:block;max-width:100%;height:auto}
+figcaption{margin-top:6px;font-size:15px;line-height:1.4;color:#2b2d32}
+table{border-collapse:collapse;width:100%;max-width:900px;font-size:15px;line-height:1.4}
+th,td{text-align:left;vertical-align:top;padding:7px 8px;border-top:1px solid #d5dae1}
+tr:first-child th,tr:first-child td{border-top:0}
+th{width:11em;font-weight:650}
+.note{font-size:14px;color:#55585f;max-width:900px}
+code{font:14px/1.4 Consolas,"Cascadia Mono",monospace;background:#e6e9ee;padding:1px 4px;border-radius:4px}
+@media (max-width:480px){
+  main{padding:18px 12px 32px}
+  h1{font-size:24px}
+  section{padding:14px 10px 16px}
+  th,td{display:block;width:auto;padding:2px 4px}
+  th{padding-top:9px}
+  td{border-top:0}
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Pastille sur la ligne du nom : le vrai HUD à côté de la variante A</h1>
+<p class="intro">La pastille d'une macro externe active monte sur la ligne du nom, contre la touche (P4.7, D-38, D-39). À gauche, la variante A validée de <code>maquettes/macro-externe/pastille-ligne-du-nom.html</code>, dessinée en HTML à la largeur du HUD ; à droite, la même ligne découpée dans le vrai HUD, rendu par son test.</p>
+
+<section>
+<h2>En bref</h2>
+<p class="bilan"><strong>Même disposition.</strong> La pastille est sur la ligne du nom, son bord droit à 8 px de la touche ; « Active · 12/100 » reste entier avec chacune des quatre pastilles ; un nom long se coupe (…) avant la pastille.</p>
+<h3>Mesuré à 200 %, sur la pastille « Attente »</h3>
+<table>
+<tr><th>Touche F10</th><td>Au même pixel dans les deux images.</td></tr>
+<tr><th>Bord droit de la pastille</th><td>Au même pixel : 8 px avant la touche, dans les deux.</td></tr>
+<tr><th>Hauteur de la pastille</th><td>Vrai HUD : de 6 à 26 px du haut de la ligne, les chiffres de D-39. Le dessin HTML la place 1 px plus bas (de 7 à 27 px).</td></tr>
+<tr><th>Largeur de la pastille</th><td>61 px dans le vrai HUD, 60 px dans le dessin : le texte + 16 px, mesuré par chacun avec sa propre police.</td></tr>
+</table>
+<h3>Ce qui ne change pas</h3>
+<ul class="liste">
+<li>Sans pastille (arrêtée, en pause, terminée, active sans pastille) : la ligne ne bouge pas ; ses rendus ne diffèrent d'avant que d'un niveau sur 255, sur au plus 7 pixels (ordre de l'atlas des glyphes).</li>
+<li>La capsule repliée (D-54) : même largeur (265 px avec l'état « Active 12/100 » et la pastille « Attente »).</li>
+<li>Les macros de MacroHUD, les réglages, le survol et les clics de la ligne.</li>
+</ul>
+</section>
+
+<section>
+<h2>La ligne, à côté de la variante A</h2>
+<h3>Les quatre pastilles, avec F10</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/pastille-a-1}}" width="{{../macro-externe/pastille-a-1.l}}" height="{{../macro-externe/pastille-a-1.h}}" alt="Variante A : quatre lignes « Exemple », pastilles Attente, Clic !, Pause 8 s et Relance sur la ligne du nom, « Active · 12/100 » ou « 13/100 » entier."></div><figcaption>Variante A (dessin HTML).</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-pastille-ligne-du-nom}}" width="{{../rendu-egui/externe-pastille-ligne-du-nom.l}}" height="{{../rendu-egui/externe-pastille-ligne-du-nom.h}}" alt="Vrai HUD : les mêmes quatre lignes, pastille sur la ligne du nom contre la touche, texte d'état entier."></div><figcaption>Vrai HUD (quatre rendus, la ligne découpée).</figcaption></figure>
+</div>
+<h3>Un nom long</h3>
+<div class="paire">
+<figure><div class="tuile"><img src="{{../macro-externe/pastille-a-2}}" width="{{../macro-externe/pastille-a-2.l}}" height="{{../macro-externe/pastille-a-2.h}}" alt="Variante A : « Exemple… » coupé avant la pastille Pause 8 s."></div><figcaption>Variante A.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-pastille-nom-long}}" width="{{../rendu-egui/externe-pastille-nom-long.l}}" height="{{../rendu-egui/externe-pastille-nom-long.h}}" alt="Vrai HUD : « Exemple au nom très long » coupé en « Exemple… » avant la pastille."></div><figcaption>Vrai HUD.</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>Dans le HUD entier</h2>
+<div class="vues">
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-2-active}}" width="{{../rendu-egui/externe-2-active.l}}" height="{{../rendu-egui/externe-2-active.h}}" alt="Vrai HUD : trois macros, « Exemple » active, pastille ambre Attente sur la ligne du nom."></div><figcaption>Pastille ambre.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-verte}}" width="{{../rendu-egui/externe-3-pastille-verte.l}}" height="{{../rendu-egui/externe-3-pastille-verte.h}}" alt="Vrai HUD : pastille verte Clic !."></div><figcaption>Pastille verte.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-grise}}" width="{{../rendu-egui/externe-3-pastille-grise.l}}" height="{{../rendu-egui/externe-3-pastille-grise.h}}" alt="Vrai HUD : pastille grise Pause 8 s, « Active · 13/100 » entier."></div><figcaption>Pastille grise.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-3-pastille-bleue}}" width="{{../rendu-egui/externe-3-pastille-bleue.l}}" height="{{../rendu-egui/externe-3-pastille-bleue.h}}" alt="Vrai HUD : pastille bleue Relance."></div><figcaption>Pastille bleue.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-souris-sur-le-hud}}" width="{{../rendu-egui/externe-souris-sur-le-hud.l}}" height="{{../rendu-egui/externe-souris-sur-le-hud.h}}" alt="Vrai HUD : la souris sur le HUD, « En pause · souris ici » entier, la pastille sur la ligne du nom."></div><figcaption>La souris sur le HUD : « En pause · souris ici » n'est plus coupé.</figcaption></figure>
+<figure><div class="tuile"><img src="{{../rendu-egui/externe-6-replie}}" width="{{../rendu-egui/externe-6-replie.l}}" height="{{../rendu-egui/externe-6-replie.h}}" alt="Vrai HUD replié : capsule « Active 12/100 », pastille Attente, F10, inchangée."></div><figcaption>Replié : la capsule ne change pas.</figcaption></figure>
+</div>
+</section>
+
+<p class="note">Images : à gauche, les HUD de la variante A photographiés à 200 % (<code>node maquettes/outils/pastille-ligne-du-nom.mjs</code>) ; à droite, <code>maquettes/rendu-egui/externe-pastille-*@2x.png</code> et <code>externe-*@2x.png</code>, du test de rendu du HUD (<code>MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::</code>). Page refaite par <code>maquettes/multi-clic/rendu/</code> (voir <code>maquettes/LISEZMOI.md</code>).</p>
+
+</main>
+</body>
+</html>

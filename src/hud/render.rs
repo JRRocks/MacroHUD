@@ -1238,13 +1238,18 @@ fn renders_external_macros() {
             }
             _ => assert_eq!(stripe, style::ON_INK, "{}", view.key),
         }
-        // The step pill, between the state and the key: its colour, left of its text.
+        // The step pill, on the name line against the key (D-38): its colour near its top, and
+        // nothing of it lower down, where its right end stood before (15 to 35 px into the line).
         let external = &view.state.external_macros[0];
         if let Some(badge) = external.badge.as_ref().filter(|_| external.status == MacroStatus::Active) {
             let key = parts::keycap_width("F10", KeyLook::OnGreen, 84.0);
-            let pill_left = 2.0 + 286.0 - 6.0 - 24.0 - 8.0 - key - 8.0 - parts::pill_width(&badge.text);
-            let middle = EXTERNAL_ROW_TOP + 49.0 / 2.0;
-            let fill = image.pixel(side + pill_left as usize + 4, top + middle as usize);
+            let right = 2.0 + 286.0 - 6.0 - 24.0 - 8.0 - key - 8.0;
+            let pill_left = right - parts::pill_width(&badge.text);
+            let row = top + EXTERNAL_ROW_TOP as usize;
+            let below = image.pixel(side + right as usize - 4, row + 32);
+            assert_eq!(below, style::ON, "{} : plus de pastille en bas", view.key);
+            // Its new top (6 px into the line), above its text, in the middle of its left end.
+            let fill = image.pixel(side + pill_left as usize + 10, row + 8);
             let expected = match badge.color {
                 BadgeColor::Amber => style::WARN,
                 BadgeColor::Blue => style::INFO,
@@ -1275,4 +1280,102 @@ fn signs_keep_their_room() {
     let narrow = text::wrap(&text::with_sign_room("Arrête avec ▶ puis relance."), 12.0, style::REGULAR, 80.0);
     assert!(narrow.iter().any(|row| row.contains('\u{A0}')), "{narrow:?}");
     assert_eq!(narrow.concat().matches('\u{A0}').count(), 3, "{narrow:?}");
+}
+
+/// The step pill on the name line (D-38, D-39): with F10 and each pill of the preview, its right
+/// edge 8 px from the key, 20 px high from 6 to 26 px into the line (around the name's line box,
+/// above the state line), and « Active · 12/100 » whole; a long name stops before the pill, cut.
+/// Without a pill nothing moves, and the folded pill keeps its width.
+#[test]
+fn the_pill_sits_on_the_name_line() {
+    let content = Rect::from_min_size(pos2(2.0, EXTERNAL_ROW_TOP), vec2(286.0, 49.0));
+    let pills = [
+        ("macro externe active, pastille ambre", "Attente"),
+        ("macro externe active, pastille verte", "Clic !"),
+        ("macro externe active, pastille grise", "Pause 8 s"),
+        ("macro externe active, pastille bleue", "Relance"),
+    ];
+    for (name, text) in pills {
+        let state = sample(name);
+        let view = &state.external_macros[0];
+        assert_eq!((view.hotkey.as_str(), view.badge.as_ref().map(|b| b.text.as_str())), ("F10", Some(text)));
+        let geometry = super::row_geometry(super::Item::External(view), content, KeyLook::OnGreen);
+        let (key, pill) = (geometry.key.expect("F10"), geometry.pill.expect("pastille"));
+        assert_eq!(key.left() - pill.right(), 8.0, "{name} : 8 px de la touche");
+        assert_eq!((pill.top() - content.top(), pill.bottom() - content.top()), (6.0, 26.0), "{name}");
+        assert_eq!(pill.center().y, geometry.text_top + style::LINE_14 / 2.0, "{name} : centrée sur le nom");
+        assert!(pill.bottom() <= geometry.text_top + style::LINE_14 + 2.0, "{name} : au-dessus du texte d'état");
+        assert_eq!(pill.width(), parts::pill_width(text), "{name} : largeur inchangée");
+        assert_eq!(geometry.name_width, pill.left() - 8.0 - geometry.left, "{name} : le nom s'arrête avant");
+        assert_eq!(geometry.state_width, key.left() - 8.0 - geometry.left, "{name} : le texte va jusqu'à la touche");
+        let (_, words, weight) = super::external_state_line(view);
+        assert!(words.ends_with("/100"), "{words}");
+        assert!(text::width(&words, 12.0, weight) <= geometry.state_width - 13.0, "« {words} » coupé ({name})");
+    }
+    // A long name stops 8 px before the pill, cut with « … ».
+    let mut long = sample("macro externe active, pastille grise");
+    long.external_macros[0].name = "Exemple au nom très long".into();
+    let geometry = super::row_geometry(super::Item::External(&long.external_macros[0]), content, KeyLook::OnGreen);
+    assert!(text::width("Exemple au nom très long", 14.0, style::SEMIBOLD) > geometry.name_width, "nom coupé");
+    // Without a pill, the line does not change.
+    for name in ["trois macros, macro externe arrêtée", "macro externe en attente", "macro externe terminée"] {
+        let state = sample(name);
+        let view = &state.external_macros[0];
+        let look = if view.status == MacroStatus::Active { KeyLook::OnGreen } else { KeyLook::Normal };
+        let geometry = super::row_geometry(super::Item::External(view), content, look);
+        assert!(geometry.pill.is_none(), "{name}");
+        assert_eq!(geometry.name_width, geometry.state_width, "{name}");
+    }
+    // The folded pill keeps its width (D-54).
+    set_open_macro(None);
+    assert_eq!(window_size(&sample("replié, macro externe active")), vec2(265.0, 36.0));
+}
+
+impl Image {
+    /// The part `width` × `height` of the image from (`left`, `top`), in pixels.
+    fn crop(&self, left: usize, top: usize, width: usize, height: usize) -> Image {
+        let pixels = (top..top + height).flat_map(|y| self.pixels[y * self.width + left..][..width].to_vec()).collect();
+        Image { width, height, pixels }
+    }
+
+    /// Images of one width, one under the other.
+    fn stack(images: &[Image]) -> Image {
+        let width = images[0].width;
+        assert!(images.iter().all(|image| image.width == width));
+        let pixels = images.iter().flat_map(|image| image.pixels.clone()).collect();
+        Image { width, height: images.iter().map(|image| image.height).sum(), pixels }
+    }
+}
+
+/// With `MACROHUD_RENDUS`: the line of the external macro cut out of the real HUD at 200 %, for its
+/// four pills stacked as on the preview's variant A, and with a long name
+/// (`maquettes/macro-externe/pastille-ligne-du-nom-resultat.html`).
+#[test]
+fn renders_the_pill_on_the_name_line() {
+    if std::env::var_os("MACROHUD_RENDUS").is_none() {
+        return;
+    }
+    let mut renderer = Renderer::new();
+    let dir = output_dir();
+    let [side, top, _] = style::SHADOW_MARGIN.map(|v| v as usize * 2);
+    let line = |renderer: &mut Renderer, mut state: HudState| {
+        // A message below the macros: the line is not the last block, its corners stay square, as on
+        // the preview's drawing (the message is cut away).
+        state.message = Some(Message::new(MessageLevel::Info, "Nouveau raccourci de « Exemple » : F10."));
+        let image = render_alone(renderer, &View { key: "ligne", state, open: None }, 2.0);
+        // The ring and the border on each side; the line from its top to its bottom line.
+        image.crop(side, top + EXTERNAL_ROW_TOP as usize * 2, 290 * 2, 50 * 2)
+    };
+    let names = [
+        "macro externe active, pastille ambre",
+        "macro externe active, pastille verte",
+        "macro externe active, pastille grise",
+        "macro externe active, pastille bleue",
+    ];
+    let lines: Vec<Image> = names.iter().map(|name| line(&mut renderer, sample(name))).collect();
+    Image::stack(&lines).save_png(&dir.join("externe-pastille-ligne-du-nom@2x.png"));
+    let mut long = sample("macro externe active, pastille grise");
+    long.external_macros[0].name = "Exemple au nom très long".into();
+    line(&mut renderer, long).save_png(&dir.join("externe-pastille-nom-long@2x.png"));
+    set_open_macro(None);
 }

@@ -590,6 +590,47 @@ fn paint_bar(ui: &Ui, p: &Painter, inner: Rect, id: Id, state: &HudState, action
     inner.top() + s::BAR_HEIGHT
 }
 
+/// Where the parts of a macro line go, in the row's `content` (D-12); the step pill of an active
+/// external macro on the name line, against the hotkey (D-38, D-39).
+struct RowGeometry {
+    toggle: Rect,
+    arrow: Rect,
+    key: Option<Rect>,
+    /// 20 px high, centred on the name's line box (6 to 26 px from the top of the line), its right
+    /// edge 8 px from the hotkey.
+    pill: Option<Rect>,
+    /// Left of the name and of the state line.
+    left: f32,
+    /// Top of the name's line box (7 px into the line).
+    text_top: f32,
+    /// Room of the name: up to 8 px before the pill, else before the hotkey.
+    name_width: f32,
+    /// Room of the state line, its icon included: up to 8 px before the hotkey, pill or not.
+    state_width: f32,
+}
+
+fn row_geometry(item: Item<'_>, content: Rect, key_look: KeyLook) -> RowGeometry {
+    let middle = content.center().y;
+    let toggle = Rect::from_min_size(pos2(content.left() + 14.0, (middle - 16.0).round()), vec2(32.0, 32.0));
+    let arrow = Rect::from_min_size(pos2(content.right() - 6.0 - 24.0, (middle - 12.0).round()), vec2(24.0, 24.0));
+    let key = (!item.hotkey().is_empty()).then(|| {
+        let width = parts::keycap_width(item.hotkey(), key_look, KEY_MAX_IN_ROW);
+        Rect::from_min_size(pos2(arrow.left() - 8.0 - width, (middle - 12.0).round()), vec2(width, KEY_HEIGHT))
+    });
+    // Without a hotkey, the arrow stands for it (D-58).
+    let right = key.map_or(arrow.left(), |key| key.left());
+    let left = toggle.right() + 8.0;
+    let text_top = content.top() + ((content.height() - (s::LINE_14 + 2.0 + s::LINE_12)) / 2.0).round();
+    let state_width = right - 8.0 - left;
+    let pill = item.badge().map(|badge| {
+        let width = parts::pill_width(&badge.text);
+        let top = (text_top + s::LINE_14 / 2.0 - parts::PILL_HEIGHT / 2.0).round();
+        Rect::from_min_size(pos2(right - 8.0 - width, top), vec2(width, parts::PILL_HEIGHT))
+    });
+    let name_width = pill.map_or(state_width, |pill| pill.left() - 8.0 - left);
+    RowGeometry { toggle, arrow, key, pill, left, text_top, name_width, state_width }
+}
+
 /// One macro line: ▶ / ■, name and state, step pill (external macros), hotkey, settings arrow.
 #[expect(clippy::too_many_arguments, reason = "painting step with its layout inputs")]
 fn paint_row(
@@ -622,10 +663,17 @@ fn paint_row(
     parts::block(p, block, fill, line, last);
     let content = Rect::from_min_size(block.min, vec2(block.width(), s::ROW_HEIGHT - 1.0));
     parts::stripe(p, Rect::from_min_size(content.min, vec2(4.0, content.height())), stripe, block.bottom(), last);
-    let middle = content.center().y;
+    let key_look = if soon {
+        KeyLook::Off
+    } else if active {
+        KeyLook::OnGreen
+    } else {
+        KeyLook::Normal
+    };
+    let geometry = row_geometry(item, content, key_look);
 
     // ▶ / ■ button; a macro « à venir » shows its kind instead, an unavailable one a dead button.
-    let toggle = Rect::from_min_size(pos2(content.left() + 14.0, (middle - 16.0).round()), vec2(32.0, 32.0));
+    let toggle = geometry.toggle;
     if soon {
         let kind = match item {
             Item::Own(view) => kind_icon(view),
@@ -665,8 +713,8 @@ fn paint_row(
         }
     }
 
-    // Settings arrow, then the hotkey (if any) and the step pill (if any), from the right.
-    let arrow = Rect::from_min_size(pos2(content.right() - 6.0 - 24.0, (middle - 12.0).round()), vec2(24.0, 24.0));
+    // Settings arrow, the hotkey (if any), the step pill (if any).
+    let arrow = geometry.arrow;
     if soon {
         icons::paint(p, Icon::Down, Rect::from_center_size(arrow.center(), vec2(13.0, 13.0)), s::SOON_CHEVRON);
     } else {
@@ -685,35 +733,16 @@ fn paint_row(
             set_open_macro(if open { None } else { Some(item.id()) });
         }
     }
-    let mut right = arrow.left();
-    if !item.hotkey().is_empty() {
-        let key_look = if soon {
-            KeyLook::Off
-        } else if active {
-            KeyLook::OnGreen
-        } else {
-            KeyLook::Normal
-        };
-        let key_width = parts::keycap_width(item.hotkey(), key_look, KEY_MAX_IN_ROW);
-        let key =
-            Rect::from_min_size(pos2(right - 8.0 - key_width, (middle - 12.0).round()), vec2(key_width, KEY_HEIGHT));
+    if let Some(key) = geometry.key {
         parts::keycap(p, key, item.hotkey(), key_look);
-        right = key.left();
     }
-    if let Some(badge) = item.badge() {
-        let width = parts::pill_width(&badge.text);
-        let pill = Rect::from_min_size(
-            pos2(right - 8.0 - width, (middle - parts::PILL_HEIGHT / 2.0).round()),
-            vec2(width, parts::PILL_HEIGHT),
-        );
+    if let (Some(pill), Some(badge)) = (geometry.pill, item.badge()) {
         parts::pill(p, pill, pill_colour(badge.color), &badge.text);
-        right = pill.left();
     }
 
-    // Name, and the state line under it; both stop before the pill or the key, cut with « … » when
-    // the room lacks (D-55).
-    let left = toggle.right() + 8.0;
-    let max_width = right - 8.0 - left;
+    // The name, cut with « … » before the pill or the key; the state line under it, before the key
+    // (D-39).
+    let left = geometry.left;
     let (name_ink, state_ink) = if active {
         (s::ON_INK, s::ON_INK)
     } else if soon {
@@ -723,8 +752,8 @@ fn paint_row(
     } else {
         (s::TEXT, s::TEXT_2)
     };
-    let text_top = content.top() + ((content.height() - (s::LINE_14 + 2.0 + s::LINE_12)) / 2.0).round();
-    let name = text::line(p, item.name(), 14.0, s::SEMIBOLD, name_ink, max_width);
+    let text_top = geometry.text_top;
+    let name = text::line(p, item.name(), 14.0, s::SEMIBOLD, name_ink, geometry.name_width);
     text::put(p, &name, left, text_top, s::LINE_14);
     let state_top = text_top + s::LINE_14 + 2.0;
     let (icon, words, weight) = item_state_line(item);
@@ -735,7 +764,7 @@ fn paint_row(
         icons::paint(p, icon, rect, if icon == Icon::Warning { s::WARN } else { state_ink });
         x += 9.0 + 4.0;
     }
-    let state = text::line(p, &words, 12.0, weight, state_ink, max_width - (x - left));
+    let state = text::line(p, &words, 12.0, weight, state_ink, geometry.state_width - (x - left));
     text::put(p, &state, x, state_top, s::LINE_12);
 }
 

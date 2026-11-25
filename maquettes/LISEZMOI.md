@@ -130,3 +130,22 @@ MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::                         # 
 node maquettes/outils/apercu-externe.mjs                                      # l'aperçu, photographié
 cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les pages
 ```
+
+## Pastille sur la ligne du nom (tâche P4.7)
+
+La pastille d'une macro externe active est sur la ligne du nom, contre la touche (D-38, D-39).
+`macro-externe/pastille-ligne-du-nom-resultat.html` (sans script, images intégrées) place la variante
+A validée de `macro-externe/pastille-ligne-du-nom.html` à côté de la même ligne découpée dans le vrai
+HUD, et dit ce qui diffère.
+
+- `rendu-egui/externe-pastille-ligne-du-nom@2x.png` : la ligne de la macro externe avec chacune des
+  quatre pastilles d'exemple, découpée dans quatre rendus du vrai HUD ;
+  `rendu-egui/externe-pastille-nom-long@2x.png` : un nom long, coupé avant la pastille.
+- `macro-externe/pastille-a-1@2x.png` et `pastille-a-2@2x.png` : les HUD de la variante A
+  photographiés à 200 %.
+
+```bash
+MACROHUD_RENDUS=maquettes/rendu-egui cargo test hud::                         # le vrai HUD
+node maquettes/outils/pastille-ligne-du-nom.mjs                               # la variante A
+cargo run --release --manifest-path maquettes/multi-clic/rendu/Cargo.toml     # les pages
+```
