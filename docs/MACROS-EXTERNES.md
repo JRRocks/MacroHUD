@@ -96,6 +96,10 @@ venu du script, l'état « Terminée », l'encadré ambre. Replié pendant la ma
 l'état et la pastille. Le détail visuel suit l'aperçu validé le 2026-11-23 (D-37) :
 `maquettes/macro-externe/apercu.html`.
 
+Depuis le 2026-11-25 (D-38, D-39) : une macro active qui montre une pastille la porte sur la ligne
+du nom, contre la touche, et garde son texte d'état entier :
+`maquettes/macro-externe/pastille-ligne-du-nom.html`.
+
 ## Tests
 
 Un script d'exemple dans le dépôt (`tests/macro-exemple/`), sans rapport avec un logiciel précis,

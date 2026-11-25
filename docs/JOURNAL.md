@@ -21,6 +21,28 @@ Gabarit :
 
 ---
 
+## 2026-11-25 · Pastille sur la ligne du nom : variante A choisie
+
+- **Session** : maître
+- **Agent** : Claude
+- **Branche et commit** : `integration/macros-externes`, ce commit `[skip ci]`.
+- **Objectif** : le texte d'état d'une macro externe active restait coupé par la pastille (D-55) ;
+  aperçu d'une pastille montée sur la ligne du nom, en deux variantes (privé : il montre la macro de
+  l'utilisateur).
+- **Réalisé** : choix de l'utilisateur le 2026-11-25, « A, contre la touche » (D-38) ; écarts et nom
+  long (D-39, choix du développeur) ; copie aux textes d'exemple
+  `maquettes/macro-externe/pastille-ligne-du-nom.html` (avant, A validée, nom long, mesures,
+  contrôle contre le rendu egui) ; P4.7 confiée à la session « visuel ».
+- **Décisions** : D-38 (remplace D-55), D-39.
+- **Vérifications** : la copie ouverte dans le navigateur en taille téléphone (375 px) : pas de
+  défilement de côté ; en A, pastille de 6 à 26 px du haut de la ligne, à 8 px de la touche, nom à
+  8 px d'elle, « Active · 12/100 » entier avec les quatre pastilles ; « avant » coupé comme le rendu
+  egui `maquettes/rendu-egui/externe-3-pastille-grise@2x.png`.
+- **Non vérifié sur le PC** : la nouvelle ligne (pas encore codée).
+- **Problèmes et dette** : aucun.
+- **Prochaine étape** : P4.7 par la session « visuel » ; fusion dans `integration/macros-externes`,
+  nouvelle version posée sur le PC, puis P4.6.
+
 ## 2026-11-24 · Ligne d'une macro externe : textes coupés, mesurés
 
 - **Session** : maître
