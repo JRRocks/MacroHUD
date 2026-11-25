@@ -21,6 +21,38 @@ Gabarit :
 
 ---
 
+## 2026-11-25 · P4.7 fusionnée : MacroHUD 0.1.45 posé sur le PC
+
+- **Session** : maître
+- **Agent** : Claude
+- **Branche et commit** : `integration/macros-externes` avancée (avance rapide) jusqu'à `efa0fe9`
+  (session « visuel », P4.7) ; ce commit `[skip ci]`.
+- **Objectif** : relire et fusionner P4.7 ; poser la nouvelle version sur le PC.
+- **Réalisé** :
+  - Relecture de `src/hud/mod.rs` (`row_geometry` : pastille de 6 à 26 px du haut de la ligne, bord
+    droit à 8 px de la touche, ou de la flèche sans touche, D-58 ; nom jusqu'à 8 px avant elle ;
+    texte d'état jusqu'à 8 px de la touche ; pastille seulement pour une macro externe active ;
+    largeur de la capsule repliée inchangée) et des tests de `src/hud/render.rs`.
+  - `MacroHUD.0.1.45.exe` (artefact de la CI n° 45, commit `efa0fe9`) posé dans le dossier
+    d'applications de l'utilisateur à la place de 0.1.43 (mise à la corbeille), puis lancé.
+- **Décisions** : aucune nouvelle (D-58 vient de la session « visuel »).
+- **Vérifications** :
+  - CI n° 45 verte (tests Linux, exécutable Windows) ; contrôle « rien de privé » : rien à signaler.
+  - Rendu egui `maquettes/rendu-egui/externe-pastille-ligne-du-nom@2x.png` regardé : pastille sur la
+    ligne du nom contre la touche, « Active · 12/100 » entier avec les quatre pastilles ; page
+    `maquettes/macro-externe/pastille-ligne-du-nom-resultat.html` ouverte.
+  - L'écart d'1 px noté par « visuel » (pastille du dessin HTML de 7 à 27 px) vient de la mesure :
+    dans le navigateur, le dessin la place de 6 à 26 px du haut de la ligne, comme D-39 et le HUD.
+  - Sur le PC : `MacroHUD.0.1.45.exe --version` donne 0.1.45 ; le HUD s'ouvre, titre
+    « MacroHUD 0.1.45 », trois macros, la macro externe arrêtée (pas de pastille à voir).
+  - Miroir Drive (`/MIR`) : 25 fichiers du Drive absents du PC retirés ; pas identifiés (rien de
+    ce projet dans la corbeille du Drive).
+- **Non vérifié sur le PC** : la pastille sur la ligne du nom dans le vrai HUD, pendant une macro
+  externe (P4.6).
+- **Problèmes et dette** : aucun.
+- **Prochaine étape** : P4.6 (arrêts R35 à R44, avec l'accord de l'utilisateur et la halte des
+  autres sessions, D-14) ; puis `main` avancé avec son accord, et la Release.
+
 ## 2026-11-25 · La pastille d'une macro externe monte sur la ligne du nom
 
 - **Session** : visuel
